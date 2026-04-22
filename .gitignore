@@ -1,0 +1,12 @@
+# Ignorar build, install y log que son generados por ROS
+build/
+install/
+log/
+
+# Ignorar archivos temporales
+*.log
+*.pyc
+__pycache__/
+.vscode/
+.idea/
+.DS_Store
