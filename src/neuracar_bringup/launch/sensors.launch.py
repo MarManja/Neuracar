@@ -5,6 +5,8 @@ from launch_ros.actions import Node
 from ament_index_python.packages import get_package_share_directory
 import os
 
+#ros2 launch realsense2_camera rs_launch.py
+#ros2 launch rplidar_ros rplidar_a3_launch.py 
 
 def generate_launch_description():
 

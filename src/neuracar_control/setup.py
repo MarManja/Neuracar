@@ -24,6 +24,9 @@ setup(
     },
     entry_points={
         'console_scripts': [
+            'remote_control_xbox_node = neuracar_control.remote_control_xbox_node:main',
+            'remote_control_ps_node = neuracar_control.remote_control_ps_node:main',
+            'vehicle_interface_node = neuracar_control.vehicle_interface_node:main',
         ],
     },
 )

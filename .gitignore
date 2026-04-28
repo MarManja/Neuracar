@@ -10,3 +10,7 @@ __pycache__/
 .vscode/
 .idea/
 .DS_Store
+
+# Ignorar repositorio LiDAR y Cámara
+src/realsense-ros/
+src/rplidar_ros/
