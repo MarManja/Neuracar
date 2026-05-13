@@ -10,7 +10,7 @@ class VehicleInterfaceNode(Node):
     def __init__(self):
         super().__init__('vehicle_interface_node')
 
-        self.declare_parameter('port', '/dev/teensy')
+        self.declare_parameter('port', '/dev/ttyUSB1')
         self.declare_parameter('baudrate', 115200)
 
         self.port = self.get_parameter('port').value

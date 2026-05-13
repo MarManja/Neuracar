@@ -32,26 +32,39 @@ class PlayStationRemoteControlNode(Node):
         self.get_logger().info('PlayStation remote control node started')
 
     def joy_callback(self, msg: Joy):
-        # PlayStation typical mapping:
-        # axes[0] = left stick horizontal
-        # axes[2] = L2
-        # axes[5] = R2
-        # buttons[4] = L1 deadman
-        #
-        # L2/R2 usually go from 1.0 released to -1.0 pressed
+        # Mapeo actualizado:
+        # axes[0] = joystick izquierdo horizontal (dirección "X")
+        # axes[1] = joystick izquierdo vertical (dirección "Y")
+        # axes[2] = L2 (reversa)
+        # axes[5] = R2 (aceleración)
+        # axes[4] = joystick derecho horizontal (derecha/izquierda)
 
-        self.deadman_pressed = msg.buttons[4] == 1
+        self.deadman_pressed = msg.buttons[4] == 1  # Deadman con L1
 
-        steering_axis = msg.axes[0]
-        l2 = msg.axes[2]
-        r2 = msg.axes[5]
+        # Dirección con el joystick izquierdo (X-axis)
+        self.steering = msg.axes[0]  # Dirección con el joystick izquierdo (horizontal)
 
-        forward = (1.0 - r2) / 2.0
-        reverse = (1.0 - l2) / 2.0
+        # Inicializamos forward y reverse en 0
+        forward = 0.0
+        reverse = 0.0
 
-        self.steering = steering_axis
-        self.throttle = forward - reverse
+        # Si L2 está presionado, la acción es reversa (verificando tanto axes como buttons)
+        if msg.axes[2] < 0 or msg.buttons[6] == 1:  # L2 presionado
+            reverse = (1.0 - msg.axes[2]) / 2.0  # L2 (reversa)
 
+        # Si R2 está presionado, la acción es aceleración (verificando tanto axes como buttons)
+        if msg.axes[5] < 0 or msg.buttons[7] == 1:  # R2 presionado
+            forward = (1.0 - msg.axes[5]) / 2.0  # R2 (aceleración)
+
+        # Si el joystick derecho se mueve a la izquierda o derecha, también debe controlar
+        if msg.axes[4] < 0:  # Joystick derecho a la izquierda (retroceder)
+            reverse = 1.0  # Retrocede
+        elif msg.axes[4] > 0:  # Joystick derecho a la derecha (avanzar)
+            forward = 1.0  # Acelera
+
+        self.throttle = forward - reverse  # Aceleración
+
+        # Deadzone para suavizar la respuesta:
         if abs(self.steering) < 0.05:
             self.steering = 0.0
 
@@ -64,9 +77,9 @@ class PlayStationRemoteControlNode(Node):
         msg.header.frame_id = 'playstation_controller'
 
         if self.deadman_pressed:
-            msg.vector.x = float(self.throttle)
-            msg.vector.y = float(self.steering)
-            msg.vector.z = 1.0
+            msg.vector.x = float(self.throttle)  # Aceleración
+            msg.vector.y = float(self.steering)  # Dirección
+            msg.vector.z = 1.0  # Valor fijo para Z (se puede ajustar si lo necesitas)
         else:
             msg.vector.x = 0.0
             msg.vector.y = 0.0
