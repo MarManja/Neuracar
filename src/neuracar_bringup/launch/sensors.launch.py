@@ -14,6 +14,7 @@ import os
 #  ros2 launch neuracar_bringup sensors.launch.py teensy:=false - sin Teensy
 #  ros2 launch neuracar_bringup sensors.launch.py camera:=false - sin cámara
 #  ros2 launch neuracar_bringup sensors.launch.py lidar:=false - sin LiDAR
+#  ros2 launch neuracar_bringup sensors.launch.py auto_shutdown:=false - sin apagado automático (útil en desarrollo)
 
 def generate_launch_description():
 
@@ -28,6 +29,10 @@ def generate_launch_description():
     arg_teensy = DeclareLaunchArgument(
         'teensy', default_value='true',
         description='Lanzar el puente serial con la Teensy'
+    )
+    arg_auto_shutdown = DeclareLaunchArgument(
+        'auto_shutdown', default_value='true',
+        description='Apagar Jetson automaticamente si bateria critica. False en desarrollo.'
     )
 
     
@@ -53,7 +58,7 @@ def generate_launch_description():
             'depth_width':      '640',
             'depth_height':     '480',
             'depth_fps':        '30',
-        }.items()
+        }.items(),
         condition=IfCondition(LaunchConfiguration('camera')),
     )
 
@@ -85,6 +90,7 @@ def generate_launch_description():
             'baudrate':     921600,
             'wheel_radius': 0.033, # metros 
             'gear_ratio':   9.5, # ratio encoder-motor → rueda
+            'auto_shutdown': LaunchConfiguration('auto_shutdown'),
         }]
     )
 
@@ -92,6 +98,7 @@ def generate_launch_description():
         arg_camera,
         arg_lidar,
         arg_teensy,
+        arg_auto_shutdown,
         camera_node,
         lidar_node,
         teensy_node,

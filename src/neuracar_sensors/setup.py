@@ -24,6 +24,7 @@ setup(
     },
     entry_points={
         'console_scripts': [
+            'teensy_bridge_node = neuracar_sensors.teensy_bridge_node:main',
         ],
     },
 )
