@@ -68,7 +68,7 @@ class ESP32BridgeNode(Node):
         # ── Parámetros ──────────────────────────────────────────────
         self.declare_parameter('port',          '/dev/esp32')
         self.declare_parameter('baudrate',      921600)
-        self.declare_parameter('wheel_radius',  0.0508)  # ESP32 fw usa 0.0508m (2")
+        self.declare_parameter('wheel_radius',  0.033)  # ESP32 fw usa 0.0508m (2")
         # gear_ratio: 189356/5/4096 = 9.2459 — calculado en el firmware v4.0
         # Actualizar si cambias la relación mecánica del chassis
         self.declare_parameter('gear_ratio',    9.2459)
@@ -285,9 +285,9 @@ class ESP32BridgeNode(Node):
         msg.linear_acceleration.y = ay
         msg.linear_acceleration.z = az
 
-        c3 = [3e-4, 0, 0,  0, 3e-4, 0,  0, 0, 3e-4]
-        c1 = [1e-4, 0, 0,  0, 1e-4, 0,  0, 0, 1e-4]
-        c2 = [2e-3, 0, 0,  0, 2e-3, 0,  0, 0, 2e-3]
+        c3 = [3e-4, 0.0, 0.0,  0.0, 3e-4, 0.0,  0.0, 0.0, 3e-4]
+        c1 = [1e-4, 0.0, 0.0,  0.0, 1e-4, 0.0,  0.0, 0.0, 1e-4]
+        c2 = [2e-3, 0.0, 0.0,  0.0, 2e-3, 0.0,  0.0, 0.0, 2e-3]
         msg.orientation_covariance         = c3
         msg.angular_velocity_covariance    = c1
         msg.linear_acceleration_covariance = c2

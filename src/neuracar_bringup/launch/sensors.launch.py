@@ -52,12 +52,8 @@ def generate_launch_description():
             'enable_infra1': 'false',
             'enable_infra2': 'false',
             # reducción de resolución para ahorrar CPU en la Jetson:
-            'color_width':      '640',
-            'color_height':     '480',
-            'color_fps':        '30',
-            'depth_width':      '640',
-            'depth_height':     '480',
-            'depth_fps':        '30',
+            'rgb_camera.color_profile':   '640x480x30',
+            'depth_module.depth_profile': '640x480x30'
         }.items(),
         condition=IfCondition(LaunchConfiguration('camera')),
     )
