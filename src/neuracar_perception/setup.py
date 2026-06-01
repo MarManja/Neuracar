@@ -1,6 +1,6 @@
 from setuptools import find_packages, setup
 
-package_name = 'neuracar_sensors'
+package_name = 'neuracar_perception'
 
 setup(
     name=package_name,
@@ -13,8 +13,8 @@ setup(
     ],
     install_requires=['setuptools'],
     zip_safe=True,
-    maintainer='devel-ds',
-    maintainer_email='devel-ds@todo.todo',
+    maintainer='marml',
+    maintainer_email='a01735160@tec.mx',
     description='TODO: Package description',
     license='TODO: License declaration',
     extras_require={
@@ -24,8 +24,10 @@ setup(
     },
     entry_points={
         'console_scripts': [
-            'teensy_bridge_node = neuracar_sensors.teensy_bridge_node:main',
-            'esp32_bridge_node = neuracar_sensors.esp32_bridge_node:main',
+            'odometry_node = neuracar_perception.odometry_node:main',
+            'obstacle_detector_node = neuracar_perception.obstacle_detector_node:main',
+            'lidar_visualizer_node = neuracar_perception.lidar_visualizer_node:main',
+             # 'lane_detection_node = neuracar_perception.lane_detection_node:main',  # Próximo 
         ],
     },
 )

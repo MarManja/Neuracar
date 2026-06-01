@@ -11,7 +11,7 @@ import os
 #  ros2 launch rplidar_ros rplidar_a3_launch.py - Opción para lanzar solo el LiDAR
 
 # Opciones directamente de este launch:
-#  ros2 launch neuracar_bringup sensors.launch.py teensy:=false - sin Teensy
+#  ros2 launch neuracar_bringup sensors.launch.py micro:=false - sin micro
 #  ros2 launch neuracar_bringup sensors.launch.py camera:=false - sin cámara
 #  ros2 launch neuracar_bringup sensors.launch.py lidar:=false - sin LiDAR
 #  ros2 launch neuracar_bringup sensors.launch.py auto_shutdown:=false - sin apagado automático (útil en desarrollo)
@@ -26,9 +26,9 @@ def generate_launch_description():
         'lidar', default_value='true',
         description='Lanzar el LiDAR RPLidar A2M12'
     )
-    arg_teensy = DeclareLaunchArgument(
-        'teensy', default_value='true',
-        description='Lanzar el puente serial con la Teensy'
+    arg_micro = DeclareLaunchArgument(
+        'micro', default_value='true',
+        description='Lanzar el puente serial con la micro'
     )
     arg_auto_shutdown = DeclareLaunchArgument(
         'auto_shutdown', default_value='true',
@@ -79,17 +79,17 @@ def generate_launch_description():
         }]
     )
 
-    teensy_node = Node(
+    micro_node = Node(
         package='neuracar_sensors',
-        executable='teensy_bridge_node',
-        name='teensy_bridge',
+        executable='esp32_bridge_node',
+        name='esp32_bridge',
         output='screen',
-        condition=IfCondition(LaunchConfiguration('teensy')),
+        condition=IfCondition(LaunchConfiguration('micro')),
         parameters=[{
-            'port':         '/dev/teensy',
+            'port':         '/dev/esp32',
             'baudrate':     921600,
             'wheel_radius': 0.033, # metros 
-            'gear_ratio':   9.5, # ratio encoder-motor → rueda
+            'gear_ratio':   9.246, # ratio encoder-motor → rueda, 9.5 aprox 9.246 medida físicamente 189356.0f / 5.0f / 4096.0f
             'auto_shutdown': LaunchConfiguration('auto_shutdown'),
         }]
     )
@@ -97,9 +97,9 @@ def generate_launch_description():
     return LaunchDescription([
         arg_camera,
         arg_lidar,
-        arg_teensy,
+        arg_micro,
         arg_auto_shutdown,
         camera_node,
         lidar_node,
-        teensy_node,
+        micro_node,
     ])
