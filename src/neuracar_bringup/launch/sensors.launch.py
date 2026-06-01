@@ -1,61 +1,75 @@
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
+from launch.actions import DeclareLaunchArgument
 from launch.conditions import IfCondition
-from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
-from ament_index_python.packages import get_package_share_directory
-import os
+from launch_ros.parameter_descriptions import ParameterValue
 
-#  ros2 launch realsense2_camera rs_launch.py - Opción para lanzar solo la cámara
-#  ros2 launch rplidar_ros rplidar_a3_launch.py - Opción para lanzar solo el LiDAR
 
-# Opciones directamente de este launch:
-#  ros2 launch neuracar_bringup sensors.launch.py micro:=false - sin micro
-#  ros2 launch neuracar_bringup sensors.launch.py camera:=false - sin cámara
-#  ros2 launch neuracar_bringup sensors.launch.py lidar:=false - sin LiDAR
-#  ros2 launch neuracar_bringup sensors.launch.py auto_shutdown:=false - sin apagado automático (útil en desarrollo)
+# Opciones:
+# ros2 launch neuracar_bringup sensors.launch.py micro:=false
+# ros2 launch neuracar_bringup sensors.launch.py camera:=false
+# ros2 launch neuracar_bringup sensors.launch.py lidar:=false
+# ros2 launch neuracar_bringup sensors.launch.py auto_shutdown:=false
+
 
 def generate_launch_description():
 
     arg_camera = DeclareLaunchArgument(
-        'camera', default_value='true',
+        'camera',
+        default_value='true',
         description='Lanzar la cámara RealSense D415'
     )
+
     arg_lidar = DeclareLaunchArgument(
-        'lidar', default_value='true',
-        description='Lanzar el LiDAR RPLidar A2M12'
+        'lidar',
+        default_value='true',
+        description='Lanzar el LiDAR RPLidar A3M1'
     )
+
     arg_micro = DeclareLaunchArgument(
-        'micro', default_value='true',
+        'micro',
+        default_value='true',
         description='Lanzar el puente serial con la micro'
     )
+
     arg_auto_shutdown = DeclareLaunchArgument(
-        'auto_shutdown', default_value='true',
+        'auto_shutdown',
+        default_value='true',
         description='Apagar Jetson automaticamente si bateria critica. False en desarrollo.'
     )
 
-    
-    realsense_launch = os.path.join(
-        get_package_share_directory('realsense2_camera'),
-        'launch',
-        'rs_launch.py'
-    )
-
-    camera_node = IncludeLaunchDescription(
-        PythonLaunchDescriptionSource(realsense_launch),
-        launch_arguments={
+    camera_node = Node(
+        package='realsense2_camera',
+        executable='realsense2_camera_node',
+        name='camera',
+        namespace='camera',
+        output='screen',
+        condition=IfCondition(LaunchConfiguration('camera')),
+        parameters=[{
             'camera_name': 'camera',
             'camera_namespace': 'camera',
-            'enable_color': 'true',
-            'enable_depth': 'true',
-            'enable_infra1': 'false',
-            'enable_infra2': 'false',
-            # reducción de resolución para ahorrar CPU en la Jetson:
-            'rgb_camera.color_profile':   '640x480x30',
-            'depth_module.depth_profile': '640x480x30'
-        }.items(),
-        condition=IfCondition(LaunchConfiguration('camera')),
+
+            'enable_color': True,
+            'enable_depth': True,
+            'enable_infra': False,
+            'enable_infra1': False,
+            'enable_infra2': False,
+
+            # Baja carga para Jetson
+            'rgb_camera.color_profile': '640x480x30',
+            'depth_module.depth_profile': '640x480x30',
+
+            # Desactivar cosas pesadas por ahora
+            'pointcloud.enable': False,
+            'align_depth.enable': False,
+
+            # Puede ayudar cuando la cámara queda en estado raro
+            'initial_reset': True,
+
+            # Evita esperar indefinidamente si no detecta cámara
+            'wait_for_device_timeout': 5.0,
+        }]
     )
 
     lidar_node = Node(
@@ -82,11 +96,19 @@ def generate_launch_description():
         output='screen',
         condition=IfCondition(LaunchConfiguration('micro')),
         parameters=[{
-            'port':         '/dev/esp32',
-            'baudrate':     921600,
-            'wheel_radius': 0.033, # metros 
-            'gear_ratio':   9.246, # ratio encoder-motor → rueda, 9.5 aprox 9.246 medida físicamente 189356.0f / 5.0f / 4096.0f
-            'auto_shutdown': LaunchConfiguration('auto_shutdown'),
+            'port': '/dev/esp32',
+            'baudrate': 921600,
+
+            'wheel_radius': 0.033,
+            'gear_ratio': 9.246,
+
+            'watchdog_s': 0.5,
+
+            # Esto fuerza que llegue como bool, no como string "false"
+            'auto_shutdown': ParameterValue(
+                LaunchConfiguration('auto_shutdown'),
+                value_type=bool
+            ),
         }]
     )
 
