@@ -29,7 +29,7 @@ except ImportError:
     raise SystemExit('pip install pyserial --break-system-packages')
 
 # Frecuencia a la que el hilo TX manda comandos al ESP32-A
-# 20 Hz es suficiente — el ESP32-A tiene watchdog de 500ms
+# 20 Hz es suficiente para el servo/ESC — watchdog ESP32 en 2000ms
 # Bajar esto reduce drásticamente la acumulación en el buffer del CH340
 TX_HZ = 20
 
