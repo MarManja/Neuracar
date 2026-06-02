@@ -105,28 +105,63 @@ def generate_launch_description():
         }]
     )
 
-    micro_node = Node(
+    # micro_node = Node(
+    #     package='neuracar_sensors',
+    #     executable='esp32_bridge_node',
+    #     name='esp32_bridge',
+    #     output='screen',
+    #     condition=IfCondition(LaunchConfiguration('micro')),
+    #     parameters=[{
+    #         #'port': '/dev/esp32',
+    #         'port_sensores':   LaunchConfiguration('port_sensores'),
+    #         'port_actuadores': LaunchConfiguration('port_actuadores'),
+    #         'baudrate': 921600,
+
+    #         'wheel_radius': 0.033,
+    #         'gear_ratio': 9.246,
+
+    #         'watchdog_s': 0.5,
+
+    #         # Esto fuerza que llegue como bool, no como string "false"
+    #         'auto_shutdown': ParameterValue(
+    #             LaunchConfiguration('auto_shutdown'),
+    #             value_type=bool
+    #         ),
+    #     }]
+    # )
+
+    # Nodo exclusivo de sensores — solo lee serial, sin actuadores
+    sensores_node = Node(
         package='neuracar_sensors',
-        executable='esp32_bridge_node',
-        name='esp32_bridge',
+        executable='esp32_sensores_bridge',
+        name='esp32_sensores_bridge',
         output='screen',
         condition=IfCondition(LaunchConfiguration('micro')),
         parameters=[{
-            #'port': '/dev/esp32',
-            'port_sensores':   LaunchConfiguration('port_sensores'),
-            'port_actuadores': LaunchConfiguration('port_actuadores'),
+            'port':     LaunchConfiguration('port_sensores'),
             'baudrate': 921600,
-
+ 
             'wheel_radius': 0.033,
-            'gear_ratio': 9.246,
-
-            'watchdog_s': 0.5,
-
-            # Esto fuerza que llegue como bool, no como string "false"
+            'gear_ratio':   9.2459,
+ 
             'auto_shutdown': ParameterValue(
                 LaunchConfiguration('auto_shutdown'),
                 value_type=bool
             ),
+        }]
+    )
+ 
+    # Nodo exclusivo de actuadores — solo escribe serial, latencia mínima
+    actuadores_node = Node(
+        package='neuracar_sensors',
+        executable='esp32_actuadores_bridge',
+        name='esp32_actuadores_bridge',
+        output='screen',
+        condition=IfCondition(LaunchConfiguration('micro')),
+        parameters=[{
+            'port':       LaunchConfiguration('port_actuadores'),
+            'baudrate':   921600,
+            'watchdog_s': 0.5,
         }]
     )
 
@@ -139,5 +174,6 @@ def generate_launch_description():
         arg_port_actuadores,
         camera_node,
         lidar_node,
-        micro_node,
+        sensores_node,
+        actuadores_node,
     ])

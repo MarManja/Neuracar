@@ -25,7 +25,8 @@ setup(
     entry_points={
         'console_scripts': [
             'teensy_bridge_node = neuracar_sensors.teensy_bridge_node:main',
-            'esp32_bridge_node = neuracar_sensors.esp32_bridge_node:main',
+            'esp32_sensores_node = neuracar_sensors.esp32_sensores_node:main',
+            'esp32_actuadores_node = neuracar_sensors.esp32_actuadores_node:main',
         ],
     },
 )
