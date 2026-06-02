@@ -95,7 +95,7 @@ class ESP32DualBridgeNode(Node):
 
         # ── Conexión serial — Actuadores ─────────────────────────────
         try:
-            self._ser_a = serial.Serial(port_a, baud, timeout=0.1)
+            self._ser_a = serial.Serial(port_a, baud, timeout=0.01)
             self.get_logger().info(f'ESP32-A (actuadores): {port_a} @ {baud}')
         except serial.SerialException as exc:
             self.get_logger().fatal(f'No se pudo abrir ESP32-A {port_a}: {exc}')
