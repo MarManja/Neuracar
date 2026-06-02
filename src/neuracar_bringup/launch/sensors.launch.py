@@ -133,8 +133,8 @@ def generate_launch_description():
     # Nodo exclusivo de sensores — solo lee serial, sin actuadores
     sensores_node = Node(
         package='neuracar_sensors',
-        executable='esp32_sensores_bridge',
-        name='esp32_sensores_bridge',
+        executable='esp32_sensores_node',
+        name='esp32_sensores_node',
         output='screen',
         condition=IfCondition(LaunchConfiguration('micro')),
         parameters=[{
@@ -154,8 +154,8 @@ def generate_launch_description():
     # Nodo exclusivo de actuadores — solo escribe serial, latencia mínima
     actuadores_node = Node(
         package='neuracar_sensors',
-        executable='esp32_actuadores_bridge',
-        name='esp32_actuadores_bridge',
+        executable='esp32_actuadores_node',
+        name='esp32_actuadores_node',
         output='screen',
         condition=IfCondition(LaunchConfiguration('micro')),
         parameters=[{
