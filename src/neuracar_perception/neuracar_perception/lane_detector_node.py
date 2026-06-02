@@ -2,7 +2,7 @@
 """
 =======================================================================
  Lane Detector — Neuracar  (RealSense D415)
- Proyecto: Neuracar / Smart Mobility
+ Proyecto: Neuracar 
 -----------------------------------------------------------------------
  Detecta la línea amarilla de la pista Quanser mediante segmentación
  HSV y publica el error lateral normalizado para el controlador

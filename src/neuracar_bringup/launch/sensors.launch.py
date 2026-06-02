@@ -11,6 +11,9 @@ from launch_ros.parameter_descriptions import ParameterValue
 # ros2 launch neuracar_bringup sensors.launch.py camera:=false
 # ros2 launch neuracar_bringup sensors.launch.py lidar:=false
 # ros2 launch neuracar_bringup sensors.launch.py auto_shutdown:=false
+# ros2 launch neuracar_bringup sensors.launch.py port_sensores:=/dev/ttyUSB0
+# ros2 launch neuracar_bringup sensors.launch.py port_actuadores:=/dev/ttyUSB0
+
 
 
 def generate_launch_description():
@@ -38,6 +41,19 @@ def generate_launch_description():
         default_value='true',
         description='Apagar Jetson automaticamente si bateria critica. False en desarrollo.'
     )
+
+    arg_port_sensores = DeclareLaunchArgument(
+        'port_sensores',
+        default_value='/dev/esp32s',
+        description='Puerto serial ESP32 sensores (encoder, IMU, bateria, OLED)'
+    )
+ 
+    arg_port_actuadores = DeclareLaunchArgument(
+        'port_actuadores',
+        default_value='/dev/esp32a',
+        description='Puerto serial ESP32 actuadores (ESC, servo)'
+    )
+ 
 
     camera_node = Node(
         package='realsense2_camera',
@@ -96,7 +112,9 @@ def generate_launch_description():
         output='screen',
         condition=IfCondition(LaunchConfiguration('micro')),
         parameters=[{
-            'port': '/dev/esp32',
+            #'port': '/dev/esp32',
+            'port_sensores':   LaunchConfiguration('port_sensores'),
+            'port_actuadores': LaunchConfiguration('port_actuadores'),
             'baudrate': 921600,
 
             'wheel_radius': 0.033,
@@ -117,6 +135,8 @@ def generate_launch_description():
         arg_lidar,
         arg_micro,
         arg_auto_shutdown,
+        arg_port_sensores,
+        arg_port_actuadores,
         camera_node,
         lidar_node,
         micro_node,

@@ -12,13 +12,13 @@ Cambios respecto al original:
   - /qcar/obstacle_alert    → /neuracar/lidar/obstacle_alert
   - front_angle_offset 4.71 → 0.0 rad
       El QCar monta el LiDAR mirando hacia atrás (270°).
-      El RPLidar A2M12 con inverted=False tiene 0° al frente.
+      El RPLidar A3M1 con inverted=False tiene 0° al frente.
       Si tu LiDAR está rotado, ajusta LIDAR_FRONT_OFFSET_RAD en los params.
   - Velocidad: msg.vector.x → msg.twist.linear.x  (TwistStamped)
   - Todos los parámetros son declarados en ROS2 param server
 
 Suscribe:
-  /scan                    (sensor_msgs/LaserScan)      RPLidar A2M12
+  /scan                    (sensor_msgs/LaserScan)      RPLidar A3M1
   /neuracar/velocity       (geometry_msgs/TwistStamped) odometry_node
 
 Publica:

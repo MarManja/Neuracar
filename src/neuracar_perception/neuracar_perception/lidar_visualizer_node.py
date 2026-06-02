@@ -1,67 +1,51 @@
 #!/usr/bin/env python3
 """
-Obstacle Detector Node — Neuracar
-===================================
-Detecta obstáculos frontales con LiDAR y ventana angular dinámica
-que se ajusta según la velocidad del vehículo.
+LiDAR Visualizer Node — Neuracar
+====================================
+Visualiza el escaneo del RPLidar A3M1 en tiempo real con gráfica polar.
+Útil para verificar montaje, detectar offset angular y debug general.
 
-Adaptado de: qcar_lidar_alert_2.py (AMH19 — QCar Smart Mobility)
+Adaptado de: lidar_kalman_node_amh19.py (AMH19 — QCar Smart Mobility)
 Cambios respecto al original:
-  - /qcar/scan              → /scan
-  - /qcar/velocity          → /neuracar/velocity  (TwistStamped, no Vector3Stamped)
-  - /qcar/obstacle_alert    → /neuracar/lidar/obstacle_alert
-  - front_angle_offset 4.71 → 0.0 rad
-      El QCar monta el LiDAR mirando hacia atrás (270°).
-      El RPLidar A2M12 con inverted=False tiene 0° al frente.
-      Si tu LiDAR está rotado, ajusta LIDAR_FRONT_OFFSET_RAD en los params.
-  - Velocidad: msg.vector.x → msg.twist.linear.x  (TwistStamped)
-  - Todos los parámetros son declarados en ROS2 param server
+  - /qcar/scan → /scan
+  - Nombre de clase y nodo actualizados
+  - QoS BEST_EFFORT mantenido (correcto para LiDAR)
+  - Añadido parámetro scan_radius_max
+
+IMPORTANTE — Jetson sin pantalla:
+  Este nodo usa matplotlib con pyplot. Para correrlo en la Jetson
+  necesitas reenviar el display a tu laptop:
+    ssh -X usuario@ip-jetson
+    ros2 run neuracar_perception lidar_visualizer_node
+  O bien correlo directamente en tu laptop si comparten ROS_DOMAIN_ID.
 
 Suscribe:
-  /scan                    (sensor_msgs/LaserScan)      RPLidar A2M12
-  /neuracar/velocity       (geometry_msgs/TwistStamped) odometry_node
+  /scan  (sensor_msgs/LaserScan)  RPLidar A3M1
 
-Publica:
-  /neuracar/lidar/obstacle_alert  (std_msgs/Bool)
+No publica tópicos — solo visualización local.
 """
 
 import numpy as np
+import matplotlib.pyplot as plt
 import rclpy
 from rclpy.node import Node
-from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy, DurabilityPolicy
-from geometry_msgs.msg import TwistStamped
+from rclpy.qos import (DurabilityPolicy, HistoryPolicy,
+                        QoSProfile, ReliabilityPolicy)
 from sensor_msgs.msg import LaserScan
-from std_msgs.msg import Bool
 
 
-class ObstacleDetectorNode(Node):
+class LidarVisualizerNode(Node):
 
     def __init__(self):
-        super().__init__('obstacle_detector_node')
+        super().__init__('lidar_visualizer_node')
 
-        # ── Parámetros ROS2 ────────────────────────────────────────
-        self.declare_parameter('distance_threshold',   0.35)   # m
-        self.declare_parameter('angle_range_low_deg',  22.5)   # deg (<= vel_threshold)
-        self.declare_parameter('angle_range_high_deg', 30.0)   # deg (>  vel_threshold)
-        self.declare_parameter('velocity_threshold',   1.0)    # m/s
-        # Offset del LiDAR respecto al frente del vehículo en radianes.
-        # RPLidar con inverted=False → 0.0 (frente = 0°)
-        # Si el LiDAR está rotado 180° → math.pi
-        # QCar original = 4.71 rad (270°, miraba hacia atrás)
-        self.declare_parameter('lidar_front_offset_rad', 0.0)
-        self.declare_parameter('debug_mode', True)
+        # ── Parámetros ─────────────────────────────────────────────
+        self.declare_parameter('scan_radius_max', 6.0)   # m — límite del plot
+        self.declare_parameter('update_hz',       10.0)  # Hz del plot
+        self._r_max = self.get_parameter('scan_radius_max').value
+        hz          = self.get_parameter('update_hz').value
 
-        self._dist_thr  = self.get_parameter('distance_threshold').value
-        self._ang_low   = self.get_parameter('angle_range_low_deg').value
-        self._ang_high  = self.get_parameter('angle_range_high_deg').value
-        self._vel_thr   = self.get_parameter('velocity_threshold').value
-        self._offset    = self.get_parameter('lidar_front_offset_rad').value
-        self._debug     = self.get_parameter('debug_mode').value
-
-        self._angle_range = self._ang_low   # ventana activa
-        self._velocity    = 0.0             # m/s
-
-        # ── QoS para LiDAR ─────────────────────────────────────────
+        # ── QoS para LiDAR — BEST_EFFORT es correcto ───────────────
         qos_lidar = QoSProfile(
             reliability=ReliabilityPolicy.BEST_EFFORT,
             history=HistoryPolicy.KEEP_LAST,
@@ -69,90 +53,80 @@ class ObstacleDetectorNode(Node):
             durability=DurabilityPolicy.VOLATILE,
         )
 
-        # ── Publisher ──────────────────────────────────────────────
-        self._alert_pub = self.create_publisher(
-            Bool, '/neuracar/lidar/obstacle_alert', 10)
-
-        # ── Subscribers ────────────────────────────────────────────
+        # ── Subscriber ─────────────────────────────────────────────
         self.create_subscription(
             LaserScan, '/scan', self._lidar_callback, qos_lidar)
 
-        # /neuracar/velocity es TwistStamped (publicado por odometry_node)
-        self.create_subscription(
-            TwistStamped, '/neuracar/velocity', self._velocity_callback, 10)
+        # ── Timer para actualizar el plot ──────────────────────────
+        self.create_timer(1.0 / hz, self._timer_callback)
+        self._latest_scan = None
 
-        self.get_logger().info('Obstacle detector node iniciado')
-        self.get_logger().info(f'  Umbral distancia : {self._dist_thr} m')
-        self.get_logger().info(f'  Ventana lenta    : ±{self._ang_low}°')
-        self.get_logger().info(f'  Ventana rápida   : ±{self._ang_high}°')
-        self.get_logger().info(f'  Offset LiDAR     : {np.degrees(self._offset):.1f}°')
+        # ── Matplotlib polar plot ──────────────────────────────────
+        plt.ion()
+        self._fig, self._ax = plt.subplots(subplot_kw={'projection': 'polar'})
+        self._ax.set_title('Neuracar — RPLidar A3M1', va='bottom')
+        self._ax.set_rmax(self._r_max)
+        self._ax.set_theta_zero_location('N')   # 0° = arriba = frente del carro
+        self._ax.set_theta_direction(-1)         # CW = igual que LiDAR físico
 
-    # ──────────────────────────────────────────────────────────────────
-    #  Velocity callback — TwistStamped (no Vector3Stamped como en QCar)
-    # ──────────────────────────────────────────────────────────────────
-    def _velocity_callback(self, msg: TwistStamped):
-        self._velocity = abs(msg.twist.linear.x)
-
-        self._angle_range = (
-            self._ang_high if self._velocity > self._vel_thr else self._ang_low
-        )
-
-        if self._debug:
-            self.get_logger().info(
-                f'Velocidad: {self._velocity:.2f} m/s → ventana ±{self._angle_range}°'
-            )
+        self.get_logger().info('LiDAR visualizer iniciado — escuchando /scan')
+        self.get_logger().info(
+            'Si no aparece la ventana, asegúrate de tener DISPLAY configurado.')
 
     # ──────────────────────────────────────────────────────────────────
-    #  LiDAR callback
+    #  Callback: guarda el último escaneo
     # ──────────────────────────────────────────────────────────────────
     def _lidar_callback(self, msg: LaserScan):
-        ranges         = np.array(msg.ranges)
-        angle_min      = msg.angle_min
-        angle_increment = msg.angle_increment
+        self._latest_scan = msg
 
-        # Debug: obstáculo más cercano en todo el escaneo
-        if self._debug:
-            valid = (ranges > msg.range_min) & np.isfinite(ranges)
-            if np.any(valid):
-                idx_min = np.argmin(np.where(valid, ranges, np.inf))
-                ang_min = angle_min + idx_min * angle_increment
-                self.get_logger().info(
-                    f'Más cercano: {ranges[idx_min]:.2f} m '
-                    f'a {np.degrees(ang_min):.1f}°'
-                )
+    # ──────────────────────────────────────────────────────────────────
+    #  Timer: actualiza el plot a la tasa configurada
+    # ──────────────────────────────────────────────────────────────────
+    def _timer_callback(self):
+        if self._latest_scan is None:
+            return
+        self._plot_scan(self._latest_scan)
 
-        # Índice central de la ventana frontal
-        center_idx = int((self._offset - angle_min) / angle_increment)
-        half_idx   = int(np.radians(self._angle_range) / angle_increment)
+    # ──────────────────────────────────────────────────────────────────
+    #  Renderizar gráfica polar
+    # ──────────────────────────────────────────────────────────────────
+    def _plot_scan(self, msg: LaserScan):
+        ranges = np.array(msg.ranges, dtype=float)
+        angles = np.linspace(msg.angle_min, msg.angle_max, len(ranges))
+        ranges = np.clip(ranges, msg.range_min, msg.range_max)
+        valid  = np.isfinite(ranges) & (ranges > msg.range_min)
 
-        start_idx = max(0, center_idx - half_idx)
-        end_idx   = min(len(ranges) - 1, center_idx + half_idx)
+        if not np.any(valid):
+            self.get_logger().warn('Sin puntos válidos en el escaneo')
+            return
 
-        # Buscar obstáculos en la ventana
-        obstacle_detected = False
-        min_dist          = float('inf')
+        self._ax.clear()
+        self._ax.scatter(angles[valid], ranges[valid], s=4, c='#EF9F27')
+        self._ax.set_theta_zero_location('N')
+        self._ax.set_theta_direction(-1)
+        self._ax.set_rmax(self._r_max)
+        self._ax.set_title('Neuracar — RPLidar A3M1', va='bottom')
 
-        for i in range(start_idx, end_idx + 1):
-            d = ranges[i]
-            if msg.range_min < d < self._dist_thr:
-                obstacle_detected = True
-                min_dist = min(min_dist, d)
+        # Resaltar zona frontal de detección de obstáculos (±30°)
+        theta_front = np.linspace(-np.radians(30), np.radians(30), 50)
+        self._ax.fill_between(
+            theta_front, 0, 0.35,
+            alpha=0.15, color='red', label='zona alerta 35cm'
+        )
 
-        # Publicar alerta
-        alert          = Bool()
-        alert.data     = obstacle_detected
-        self._alert_pub.publish(alert)
+        plt.pause(0.001)
 
-        if obstacle_detected:
-            self.get_logger().warn(
-                f'¡Obstáculo a {min_dist:.2f} m!  '
-                f'(vel={self._velocity:.2f} m/s, cono=±{self._angle_range}°)'
-            )
+        d_min  = np.min(ranges[valid])
+        d_mean = np.mean(ranges[valid])
+        self.get_logger().info(
+            f'Min: {d_min:.2f} m  |  Media: {d_mean:.2f} m  |  '
+            f'Puntos válidos: {np.sum(valid)}'
+        )
 
 
 def main(args=None):
     rclpy.init(args=args)
-    node = ObstacleDetectorNode()
+    node = LidarVisualizerNode()
     try:
         rclpy.spin(node)
     except KeyboardInterrupt:

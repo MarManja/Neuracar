@@ -27,7 +27,8 @@ setup(
             'odometry_node = neuracar_perception.odometry_node:main',
             'obstacle_detector_node = neuracar_perception.obstacle_detector_node:main',
             'lidar_visualizer_node = neuracar_perception.lidar_visualizer_node:main',
-             # 'lane_detection_node = neuracar_perception.lane_detection_node:main',  # Próximo 
+            'dashboard_node = neuracar_perception.dashboard_node:main',
+            'lane_detector_node = neuracar_perception.lane_detector_node:main',  # Próximo 
         ],
     },
 )

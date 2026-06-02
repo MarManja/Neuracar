@@ -28,7 +28,9 @@ setup(
             'remote_control_ps_node = neuracar_control.remote_control_ps_node:main',
             'keyboard_control_node = neuracar_control.keyboard_control_node:main',
             'vehicle_interface_node = neuracar_control.vehicle_interface_node:main',
-        
+            'stanley_lane_follower_node = neuracar_control.stanley_lane_follower_node:main',
+            'path_recorder_node = neuracar_control.path_recorder_node:main',  
+            'stanley_controller_node = neuracar_control.stanley_controller_node:main',
         ],
     },
 )
