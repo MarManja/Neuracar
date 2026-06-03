@@ -45,10 +45,16 @@ class ObstacleDetectorNode(Node):
         self.declare_parameter('angle_range_high_deg', 30.0)   # deg (>  vel_threshold)
         self.declare_parameter('velocity_threshold',   1.0)    # m/s
         # Offset del LiDAR respecto al frente del vehículo en radianes.
-        # RPLidar con inverted=False → 0.0 (frente = 0°)
-        # Si el LiDAR está rotado 180° → math.pi
-        # QCar original = 4.71 rad (270°, miraba hacia atrás)
-        self.declare_parameter('lidar_front_offset_rad', 0.0)
+        # Neuracar (cable atrás)   → math.pi  ≈ 3.1416  ← VALOR CORRECTO
+        # RPLidar cable derecha    → -math.pi/2 ≈ -1.5708
+        # QCar original            → 4.71 rad (270°, miraba hacia atrás)
+        #
+        # CÓMO CALIBRAR:
+        #   1. Corre el visualizador (lidar_visualizer_node con offset=0).
+        #   2. Pon una pared justo al frente del carro.
+        #   3. Anota el ángulo (°) donde aparece el bloque de puntos.
+        #   4. lidar_front_offset_rad = ese_ángulo_en_radianes
+        self.declare_parameter('lidar_front_offset_rad', 3.1416)
         self.declare_parameter('debug_mode', True)
 
         self._dist_thr  = self.get_parameter('distance_threshold').value
@@ -121,22 +127,27 @@ class ObstacleDetectorNode(Node):
                     f'a {np.degrees(ang_min):.1f}°'
                 )
 
-        # Índice central de la ventana frontal
-        center_idx = int((self._offset - angle_min) / angle_increment)
-        half_idx   = int(np.radians(self._angle_range) / angle_increment)
+        # ── Ventana frontal con wrap-around correcto ───────────────
+        # Ángulo de cada rayo en el frame del vehículo, wrap a (−π, π]
+        angles     = angle_min + np.arange(len(ranges)) * angle_increment
+        rel_angles = (angles - self._offset + np.pi) % (2 * np.pi) - np.pi
 
-        start_idx = max(0, center_idx - half_idx)
-        end_idx   = min(len(ranges) - 1, center_idx + half_idx)
+        half_rad = np.radians(self._angle_range)
+        window   = np.abs(rel_angles) <= half_rad
 
-        # Buscar obstáculos en la ventana
-        obstacle_detected = False
-        min_dist          = float('inf')
+        # Lecturas válidas: finitas y dentro del rango físico del sensor
+        valid_ranges = (
+            np.isfinite(ranges) &
+            (ranges > msg.range_min) &
+            (ranges < msg.range_max)
+        )
 
-        for i in range(start_idx, end_idx + 1):
-            d = ranges[i]
-            if msg.range_min < d < self._dist_thr:
-                obstacle_detected = True
-                min_dist = min(min_dist, d)
+        # Obstáculos: en la ventana frontal, válidos y bajo el umbral
+        in_window         = window & valid_ranges
+        close_enough      = ranges < self._dist_thr
+        obstacle_detected = bool(np.any(in_window & close_enough))
+        min_dist          = (float(np.min(ranges[in_window]))
+                             if np.any(in_window) else float('inf'))
 
         # Publicar alerta
         alert          = Bool()
