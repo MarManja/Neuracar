@@ -67,7 +67,7 @@ def generate_launch_description():
             'camera_namespace': 'camera',
 
             'enable_color': True,
-            'enable_depth': True,
+            'enable_depth': False,
             'enable_infra': False,
             'enable_infra1': False,
             'enable_infra2': False,
