@@ -234,7 +234,7 @@ def compute_analysis(ref: List[Waypoint],
     with open(txt_out, 'w') as f:
         f.write(f'{sep}\n')
         f.write(f' STANLEY CONTROLLER — REPORTE DE ANÁLISIS\n')
-        f.write(f' Neuracar\n')
+        f.write(f' Neuracar \n')
         f.write(f'{sep}\n')
         f.write(f' Prueba        : {run_name}\n')
         f.write(f' Fecha         : {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}\n')
@@ -379,7 +379,7 @@ class StanleyController(Node):
         self.declare_parameter('min_throttle', 0.45)  # umbral: por debajo el carro no avanza
         self.declare_parameter('max_steer',    0.5)   # ángulo máx. servo en rad (π/6≈0.52 es seguro para la pista Quanser)
         self.declare_parameter('lookahead',   3)
-        self.declare_parameter('goal_radius', 0.3)
+        self.declare_parameter('goal_radius', 0.05)  # 5 cm — evita falso positivo al arrancar
         self.declare_parameter('loop',        False)
         self.declare_parameter('max_loops',   1)
 
@@ -495,9 +495,42 @@ class StanleyController(Node):
 
     # ── Waypoint más cercano ───────────────────────────────────────
     def _nearest(self) -> int:
+        """
+        Busca el waypoint más cercano al frente del vehículo.
+
+        Ventana de búsqueda adaptativa:
+          - Hacia atrás : solo 3 wp (evita retroceder al índice anterior)
+          - Hacia adelante: max(150, wp_por_segundo * 4) wp
+            → cubre al menos 4 s de movimiento sin importar la densidad
+              de la trayectoria ni la velocidad.
+
+        Por qué es importante:
+          Con waypoints cada 2 cm a speed=0.6 m/s el carro avanza
+          ~30 wp/s. Una ventana de solo +50 wp cubre 1.7 s → si el
+          control loop se retrasa o el carro acelera, el nearest queda
+          atrasado y el target apunta hacia atrás → giro invertido.
+        """
+        # Estimar cuántos waypoints avanza el carro por segundo
+        # usando la distancia media entre los primeros waypoints
+        if self._n > 10:
+            d_sample = dist2d(
+                (self._waypoints[0][0], self._waypoints[0][1]),
+                (self._waypoints[9][0], self._waypoints[9][1])
+            ) / 9.0  # distancia media entre wp
+            if d_sample > 1e-4:
+                wp_per_sec = abs(self._v) / d_sample if self._v != 0 else 30
+            else:
+                wp_per_sec = 30
+        else:
+            wp_per_sec = 30
+
+        # Ventana: 3 hacia atrás, mínimo 150 o 4 s hacia adelante
+        look_ahead = max(150, int(wp_per_sec * 4))
+        search_start = max(0,        self._idx - 3)
+        search_end   = min(self._n,  self._idx + look_ahead)
+
         best, min_d = self._idx, float('inf')
-        for i in range(max(0, self._idx - 5),
-                       min(self._n, self._idx + 50)):
+        for i in range(search_start, search_end):
             d = dist2d((self._x, self._y),
                        (self._waypoints[i][0], self._waypoints[i][1]))
             if d < min_d:
