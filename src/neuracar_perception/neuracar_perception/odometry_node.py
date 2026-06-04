@@ -1,15 +1,24 @@
 #!/usr/bin/env python3
 """
-odometry_node.py — Neuracar v2.0
+odometry_node.py — Neuracar v3.0
 ===================================
 Fusiona encoder + IMU para producir pose y velocidad del vehículo.
 
-Cambios v2.0 vs v1.0:
-  - Suscribe a /neuracar/wheel_speed (Float32) en lugar de msg.effort[0]
-    del JointState — semánticamente correcto
-  - Suscribe a /neuracar/motor_rpm para loggear y verificar gear_ratio
-  - Covarianzas de pose documentadas: diagonal explícita con comentario
-    de por qué cada valor
+Cambios v3.0 vs v2.0:
+  - Calibración de yaw en la primera lectura del IMU (yaw_offset).
+    El BNO055 en modo NDOF reporta heading absoluto de brújula —
+    si el carro cambia de orientación entre la grabación de la
+    trayectoria y la ejecución del controlador, el heading difiere
+    y el Stanley ve un psi_e enorme desde el primer frame.
+    Con yaw_offset el heading siempre arranca en 0° relativo,
+    igual que hacía pose_ekf_qcar_2.py en el QCar.
+
+  - El quaternión publicado también se rota por yaw_offset para que
+    el TF odom→base_link sea consistente con el yaw calibrado.
+
+  - Parámetro reset_yaw_on_start (bool, default True): si False,
+    desactiva la calibración y usa el heading absoluto del IMU
+    (útil si se integra con robot_localization en el futuro).
 
 Suscribe:
   /neuracar/wheel_speed  (std_msgs/Float32)       50 Hz
@@ -55,14 +64,26 @@ class OdometryNode(Node):
     def __init__(self):
         super().__init__('odometry_node')
 
+        # ── Parámetro de calibración ────────────────────────────────
+        self.declare_parameter('reset_yaw_on_start', True)
+        self._reset_yaw = self.get_parameter('reset_yaw_on_start').value
+
         # ── Estado dead reckoning ────────────────────────────────────
         self._x   = 0.0   # m — posición global X
         self._y   = 0.0   # m — posición global Y
-        self._yaw = 0.0   # rad — del IMU (no integrado, es absoluto)
+        self._yaw = 0.0   # rad — yaw calibrado (relativo al arranque)
         self._v   = 0.0   # m/s — del encoder via /neuracar/wheel_speed
         self._w   = 0.0   # rad/s — del IMU angular_velocity.z
 
-        # Quaternión del IMU — cache actualizado en _imu_cb
+        # Calibración de yaw — igual que pose_ekf_qcar_2.py
+        # Primera lectura del IMU → se guarda como offset
+        # A partir de ahí: yaw_calibrado = yaw_imu - yaw_offset
+        # Efecto: el heading siempre arranca en 0° sin importar la
+        # orientación absoluta del BNO055 al encender.
+        self._yaw_offset    = 0.0
+        self._yaw_calibrated = False
+
+        # Quaternión calibrado — se reconstruye en _imu_cb tras aplicar offset
         self._q_w = 1.0
         self._q_x = 0.0
         self._q_y = 0.0
@@ -93,7 +114,12 @@ class OdometryNode(Node):
         self.create_subscription(
             Float32, '/neuracar/motor_rpm', self._rpm_cb, 10)
 
-        self.get_logger().info('Odometry node v2.0 iniciado.')
+        self.get_logger().info('Odometry node v3.0 iniciado.')
+        self.get_logger().info(
+            f'  reset_yaw_on_start = {self._reset_yaw}  '
+            f'(calibra heading en primera lectura IMU)')
+        self.get_logger().info(
+            '  Esperando primera lectura IMU para calibrar yaw...')
 
     # ── Subscriber: velocidad lineal del vehículo ────────────────────
 
@@ -128,19 +154,68 @@ class OdometryNode(Node):
 
     def _imu_cb(self, msg: Imu):
         """
-        Guarda orientación completa (quaternión) y yaw rate.
-        El yaw se extrae para el dead reckoning en _wheel_speed_cb.
-        No dispara publicación — la cadencia la lleva wheel_speed.
-        """
-        self._q_w = msg.orientation.w
-        self._q_x = msg.orientation.x
-        self._q_y = msg.orientation.y
-        self._q_z = msg.orientation.z
+        Guarda orientación calibrada y yaw rate.
 
-        # Extraer yaw del quaternión (rotación alrededor de Z)
-        siny = 2.0 * (self._q_w * self._q_z + self._q_x * self._q_y)
-        cosy = 1.0 - 2.0 * (self._q_y**2 + self._q_z**2)
-        self._yaw = math.atan2(siny, cosy)
+        Calibración de yaw (reset_yaw_on_start=True):
+          1. Primera lectura: yaw_offset = yaw_imu_raw
+          2. Lecturas siguientes: yaw = normalize(yaw_imu_raw - yaw_offset)
+          3. El quaternión publicado se reconstruye desde el yaw calibrado
+             manteniendo roll y pitch del IMU sin modificar.
+
+        Por qué es necesario:
+          El BNO055 en modo NDOF fusiona giroscopio + acelerómetro +
+          magnetómetro → produce heading absoluto de brújula.
+          Si el carro se mueve o el IMU recalibra entre sesiones,
+          el heading cambia aunque el carro esté en el mismo sitio.
+          Sin calibración, el Stanley ve psi_e enorme al arrancar.
+        """
+        # Extraer yaw raw del quaternión del IMU
+        qw = msg.orientation.w
+        qx = msg.orientation.x
+        qy = msg.orientation.y
+        qz = msg.orientation.z
+
+        siny = 2.0 * (qw * qz + qx * qy)
+        cosy = 1.0 - 2.0 * (qy**2 + qz**2)
+        yaw_raw = math.atan2(siny, cosy)
+
+        # ── Calibración en la primera lectura ─────────────────────
+        if self._reset_yaw and not self._yaw_calibrated:
+            self._yaw_offset     = yaw_raw
+            self._yaw_calibrated = True
+            self.get_logger().info(
+                f'Yaw calibrado. Offset = {math.degrees(yaw_raw):.2f}° '
+                f'(heading absoluto del BNO055 al arrancar)'
+            )
+
+        # ── Aplicar offset ────────────────────────────────────────
+        if self._reset_yaw:
+            yaw_cal = yaw_raw - self._yaw_offset
+            # Normalizar a (−π, π]
+            while yaw_cal >  math.pi: yaw_cal -= 2.0 * math.pi
+            while yaw_cal <= -math.pi: yaw_cal += 2.0 * math.pi
+        else:
+            yaw_cal = yaw_raw   # heading absoluto, sin calibrar
+
+        self._yaw = yaw_cal
+
+        # ── Reconstruir quaternión desde yaw calibrado ────────────
+        # Mantiene roll y pitch del IMU, reemplaza solo el componente yaw.
+        # Extrae roll y pitch del quaternión original:
+        roll  = math.atan2(2*(qw*qx + qy*qz), 1 - 2*(qx**2 + qy**2))
+        pitch = math.asin(max(-1.0, min(1.0, 2*(qw*qy - qz*qx))))
+
+        cy = math.cos(yaw_cal * 0.5)
+        sy = math.sin(yaw_cal * 0.5)
+        cp = math.cos(pitch   * 0.5)
+        sp = math.sin(pitch   * 0.5)
+        cr = math.cos(roll    * 0.5)
+        sr = math.sin(roll    * 0.5)
+
+        self._q_w = cr * cp * cy + sr * sp * sy
+        self._q_x = sr * cp * cy - cr * sp * sy
+        self._q_y = cr * sp * cy + sr * cp * sy
+        self._q_z = cr * cp * sy - sr * sp * cy
 
         # Yaw rate — positivo = CCW (ROS2), del giroscopio BNO055
         self._w = msg.angular_velocity.z
