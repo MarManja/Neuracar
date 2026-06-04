@@ -2,7 +2,7 @@
 """
 =======================================================================
  Stanley Lane Follower — Neuracar
- Proyecto: Neuracar / Smart Mobility
+ Proyecto: Neuracar
 -----------------------------------------------------------------------
  Controlador Stanley para seguimiento de carril por visión.
  Integra parada de emergencia por obstáculo LiDAR.

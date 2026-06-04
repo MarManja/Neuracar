@@ -2,7 +2,7 @@
 """
 =======================================================================
  Path Recorder Node — Neuracar
- Proyecto: Neuracar / Smart Mobility
+ Proyecto: Neuracar
 -----------------------------------------------------------------------
  Graba la trayectoria del robot desde /neuracar/odometry y guarda
  los waypoints en un CSV dentro de neuracar_control/data/.

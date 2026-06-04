@@ -50,6 +50,11 @@ import time
 from datetime import datetime
 from typing import List, Tuple, Optional
 
+import matplotlib
+matplotlib.use('Agg')   # sin ventana — guarda directo a PNG
+import matplotlib.pyplot as plt
+import numpy as np
+
 import rclpy
 from rclpy.node import Node
 from geometry_msgs.msg import TwistStamped, Vector3Stamped
@@ -229,7 +234,7 @@ def compute_analysis(ref: List[Waypoint],
     with open(txt_out, 'w') as f:
         f.write(f'{sep}\n')
         f.write(f' STANLEY CONTROLLER — REPORTE DE ANÁLISIS\n')
-        f.write(f' Neuracar / Smart Mobility\n')
+        f.write(f' Neuracar\n')
         f.write(f'{sep}\n')
         f.write(f' Prueba        : {run_name}\n')
         f.write(f' Fecha         : {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}\n')
@@ -261,6 +266,85 @@ def compute_analysis(ref: List[Waypoint],
         f.write(f'  CSV análisis : {csv_out}\n')
         f.write(f'  Reporte txt  : {txt_out}\n')
         f.write(f'{sep}\n')
+
+    # ── Gráficas (4 paneles, igual que Pure Pursuit) ─────────────
+    try:
+        times    = [r['time_s']      for r in rows]
+        cte_sign = [r['cte_m']       for r in rows]
+        cte_abs_ = [abs(c)           for c in cte_sign]
+        ref_x    = [r['ref_x']       for r in rows]
+        ref_y    = [r['ref_y']       for r in rows]
+        real_x   = [r['real_x']      for r in rows]
+        real_y   = [r['real_y']      for r in rows]
+
+        fig, axes = plt.subplots(2, 2, figsize=(13, 10))
+        fig.suptitle(
+            f'Stanley Controller — {run_name}\n'
+            f'RMS={rms_cte:.3f}m  max={max_cte:.3f}m  '
+            f'<5cm={pct_under5:.0f}%  <10cm={pct_under10:.0f}%',
+            fontsize=11)
+
+        # Panel 1: trayectoria XY referencia vs real
+        ax = axes[0, 0]
+        ax.plot(ref_x,  ref_y,  '-r',  linewidth=2,   label='Referencia')
+        ax.plot(real_x, real_y, '-b',  linewidth=1.5, label='Real')
+        if real_x:
+            ax.scatter(real_x[0],  real_y[0],  s=100, c='green',
+                       marker='o', zorder=5, label='Inicio')
+            ax.scatter(real_x[-1], real_y[-1], s=100, c='red',
+                       marker='x', zorder=5, label='Fin')
+        ax.set_xlabel('X [m]'); ax.set_ylabel('Y [m]')
+        ax.set_title('Trayectoria XY')
+        ax.legend(fontsize=8); ax.grid(True); ax.set_aspect('equal')
+
+        # Panel 2: CTE con signo vs tiempo
+        ax = axes[0, 1]
+        ax.plot(times, cte_sign, '-g', linewidth=1.5, label='CTE')
+        ax.axhline(y=0,        color='k',  linewidth=0.8, linestyle='--')
+        ax.axhline(y=mean_cte, color='r',  linewidth=1,   linestyle=':',
+                   label=f'Media {mean_cte:+.3f}m')
+        ax.axhline(y= 0.05,    color='orange', linewidth=0.7, linestyle=':')
+        ax.axhline(y=-0.05,    color='orange', linewidth=0.7, linestyle=':',
+                   label='±5 cm')
+        ax.set_xlabel('Tiempo [s]'); ax.set_ylabel('CTE [m]')
+        ax.set_title('Error lateral (CTE con signo)')
+        ax.legend(fontsize=8); ax.grid(True)
+
+        # Panel 3: |CTE| acumulado + RMS
+        ax = axes[1, 0]
+        ax.plot(times, cte_abs_, '-m', linewidth=1.5, label='|CTE|')
+        ax.axhline(y=rms_cte, color='r', linewidth=1.2, linestyle='--',
+                   label=f'RMS {rms_cte:.3f}m')
+        ax.axhline(y=0.05, color='orange', linewidth=0.7,
+                   linestyle=':', label='5 cm')
+        ax.axhline(y=0.10, color='red',    linewidth=0.7,
+                   linestyle=':', label='10 cm')
+        ax.set_xlabel('Tiempo [s]'); ax.set_ylabel('|CTE| [m]')
+        ax.set_title('Error lateral absoluto')
+        ax.legend(fontsize=8); ax.grid(True)
+
+        # Panel 4: histograma de |CTE|
+        ax = axes[1, 1]
+        ax.hist(cte_abs_, bins=30, color='steelblue', edgecolor='white',
+                alpha=0.8)
+        ax.axvline(x=rms_cte,  color='r',      linewidth=1.5,
+                   linestyle='--', label=f'RMS {rms_cte:.3f}m')
+        ax.axvline(x=0.05,     color='orange',  linewidth=1,
+                   linestyle=':', label='5 cm')
+        ax.axvline(x=0.10,     color='red',     linewidth=1,
+                   linestyle=':', label='10 cm')
+        ax.set_xlabel('|CTE| [m]'); ax.set_ylabel('Frecuencia')
+        ax.set_title('Distribución del error lateral')
+        ax.legend(fontsize=8); ax.grid(True)
+
+        plt.tight_layout()
+        png_out = os.path.join(runs_dir, f'{stem}_plot.png')
+        fig.savefig(png_out, dpi=200, bbox_inches='tight')
+        plt.close(fig)
+        print(f'  Gráfica    → {png_out}')
+
+    except Exception as exc:
+        print(f'  [WARN] No se pudo generar la gráfica: {exc}')
 
     # ── Imprimir en terminal ──────────────────────────────────────
     print(f'\n{sep}')
@@ -500,12 +584,15 @@ class StanleyController(Node):
         self._publish(speed, steering_norm)
 
     def _publish(self, speed: float, steering: float):
-        msg = Vector3Stamped()
-        msg.header.stamp    = self.get_clock().now().to_msg()
-        msg.header.frame_id = 'base_link'
-        msg.vector.x        = float(speed)
-        msg.vector.y        = float(steering)
-        self._pub.publish(msg)
+        try:
+            msg = Vector3Stamped()
+            msg.header.stamp    = self.get_clock().now().to_msg()
+            msg.header.frame_id = 'base_link'
+            msg.vector.x        = float(speed)
+            msg.vector.y        = float(steering)
+            self._pub.publish(msg)
+        except Exception:
+            pass   # contexto RCL ya destruido — ignorar silenciosamente
 
     def finalize(self):
         """Llama al análisis al terminar."""
@@ -535,11 +622,23 @@ def main(args=None):
         rclpy.spin(node)
     except KeyboardInterrupt:
         pass
+    except Exception as exc:
+        # RuntimeError de rclpy (contexto inválido, etc.) — no es fatal
+        print(f'[WARN] spin terminó con excepción: {exc}')
     finally:
+        # STOP — _publish ya es tolerante a contexto destruido
         node._publish(0.0, 0.0)
+        # Análisis siempre se ejecuta, incluso si hubo excepción en spin
+        print('\nGuardando análisis de la prueba...')
         node.finalize()
-        node.destroy_node()
-        rclpy.shutdown()
+        try:
+            node.destroy_node()
+        except Exception:
+            pass
+        try:
+            rclpy.shutdown()
+        except Exception:
+            pass
         print('Stanley Controller detenido.')
 
 
