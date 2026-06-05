@@ -1,91 +1,90 @@
 #!/usr/bin/env python3
+"""
+remote_control_ps_node.py — Neuracar v2.0
+Cambio v2.0: publica en cmd_velocity [m/s] y cmd_steering [-1,1]
+en lugar de user_command directo. El PID mantiene velocidad constante.
+"""
 
 import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import Joy
-from geometry_msgs.msg import Vector3Stamped
+from std_msgs.msg import Bool, Float32
 
 
 class PlayStationRemoteControlNode(Node):
     def __init__(self):
         super().__init__('remote_control_ps_node')
 
-        self.publisher = self.create_publisher(
-            Vector3Stamped,
-            '/neuracar/user_command',
-            10
-        )
+        self.declare_parameter('max_speed', 0.5)   # m/s
+        self._max_speed = self.get_parameter('max_speed').value
 
-        self.subscription = self.create_subscription(
-            Joy,
-            '/joy',
-            self.joy_callback,
-            10
-        )
+        self._pub_vel = self.create_publisher(Float32, '/neuracar/cmd_velocity', 10)
+        self._pub_str = self.create_publisher(Float32, '/neuracar/cmd_steering', 10)
 
-        self.deadman_pressed = False
-        self.throttle = 0.0
-        self.steering = 0.0
+        self.create_subscription(Joy, '/joy', self._joy_cb, 10)
 
-        self.timer = self.create_timer(0.02, self.publish_command)
+        self._obstacle      = False
+        self._obstacle_rear = False
+        self.create_subscription(Bool, '/neuracar/lidar/obstacle_alert',
+                                 self._alert_cb, 10)
+        self.create_subscription(Bool, '/neuracar/lidar/obstacle_alert_rear',
+                                 self._alert_rear_cb, 10)
 
-        self.get_logger().info('PlayStation remote control node started')
+        self._deadman  = False
+        self._speed_ms = 0.0
+        self._steering = 0.0
 
-    def joy_callback(self, msg: Joy):
-        # Mapeo actualizado:
-        # axes[0] = joystick izquierdo horizontal (dirección "X")
-        # axes[1] = joystick izquierdo vertical (dirección "Y")
-        # axes[2] = L2 (reversa)
-        # axes[5] = R2 (aceleración)
-        # axes[4] = joystick derecho horizontal (derecha/izquierda)
+        self.create_timer(0.02, self._publish)
+        self.get_logger().info(
+            f'PS control v2.0 — max_speed={self._max_speed} m/s | PID activo')
 
-        self.deadman_pressed = msg.buttons[4] == 1  # Deadman con L1
+    def _alert_cb(self, msg: Bool):
+        self._obstacle = msg.data
+        if msg.data:
+            self.get_logger().warn('Obstáculo al FRENTE', throttle_duration_sec=1.0)
 
-        # Dirección con el joystick izquierdo (X-axis)
-        self.steering = msg.axes[0]  # Dirección con el joystick izquierdo (horizontal)
+    def _alert_rear_cb(self, msg: Bool):
+        self._obstacle_rear = msg.data
+        if msg.data:
+            self.get_logger().warn('Obstáculo TRASERO', throttle_duration_sec=1.0)
 
-        # Inicializamos forward y reverse en 0
-        forward = 0.0
-        reverse = 0.0
+    def _joy_cb(self, msg: Joy):
+        # PS mapping:
+        #   axes[0] = left stick horizontal
+        #   axes[2] = L2, axes[5] = R2
+        #   axes[4] = right stick vertical
+        #   buttons[4] = L1 (deadman)
 
-        # Si L2 está presionado, la acción es reversa (verificando tanto axes como buttons)
-        if msg.axes[2] < 0 or msg.buttons[6] == 1:  # L2 presionado
-            reverse = (1.0 - msg.axes[2]) / 2.0  # L2 (reversa)
+        self._deadman = (msg.buttons[4] == 1)
+        self._steering = msg.axes[0]
 
-        # Si R2 está presionado, la acción es aceleración (verificando tanto axes como buttons)
-        if msg.axes[5] < 0 or msg.buttons[7] == 1:  # R2 presionado
-            forward = (1.0 - msg.axes[5]) / 2.0  # R2 (aceleración)
+        forward_ms = reverse_ms = 0.0
 
-        # Si el joystick derecho se mueve a la izquierda o derecha, también debe controlar
-        if msg.axes[4] < 0:  # Joystick derecho a la izquierda (retroceder)
-            reverse = 1.0  # Retrocede
-        elif msg.axes[4] > 0:  # Joystick derecho a la derecha (avanzar)
-            forward = 1.0  # Acelera
+        if msg.axes[5] < 0 or msg.buttons[7] == 1:
+            forward_ms = ((1.0 - msg.axes[5]) / 2.0) * self._max_speed
+        if msg.axes[2] < 0 or msg.buttons[6] == 1:
+            reverse_ms = ((1.0 - msg.axes[2]) / 2.0) * self._max_speed
 
-        self.throttle = forward - reverse  # Aceleración
+        if msg.axes[4] < 0:   reverse_ms = self._max_speed
+        elif msg.axes[4] > 0: forward_ms = self._max_speed
 
-        # Deadzone para suavizar la respuesta:
-        if abs(self.steering) < 0.05:
-            self.steering = 0.0
+        self._speed_ms = forward_ms - reverse_ms
 
-        if abs(self.throttle) < 0.05:
-            self.throttle = 0.0
+        if abs(self._steering)  < 0.05: self._steering  = 0.0
+        if abs(self._speed_ms)  < 0.02: self._speed_ms  = 0.0
 
-    def publish_command(self):
-        msg = Vector3Stamped()
-        msg.header.stamp = self.get_clock().now().to_msg()
-        msg.header.frame_id = 'playstation_controller'
+    def _publish(self):
+        if not self._deadman:
+            v = Float32(); v.data = 0.0; self._pub_vel.publish(v)
+            s = Float32(); s.data = 0.0; self._pub_str.publish(s)
+            return
 
-        if self.deadman_pressed:
-            msg.vector.x = float(self.throttle)  # Aceleración
-            msg.vector.y = float(self.steering)  # Dirección
-            msg.vector.z = 1.0  # Valor fijo para Z (se puede ajustar si lo necesitas)
-        else:
-            msg.vector.x = 0.0
-            msg.vector.y = 0.0
-            msg.vector.z = 0.0
+        speed = self._speed_ms
+        if self._obstacle      and speed > 0.0: speed = 0.0
+        if self._obstacle_rear and speed < 0.0: speed = 0.0
 
-        self.publisher.publish(msg)
+        v = Float32(); v.data = float(speed);        self._pub_vel.publish(v)
+        s = Float32(); s.data = float(self._steering); self._pub_str.publish(s)
 
 
 def main(args=None):
