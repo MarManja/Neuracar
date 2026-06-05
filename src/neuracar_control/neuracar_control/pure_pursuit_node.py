@@ -430,18 +430,29 @@ class PurePursuitNode(Node):
     def _find_nearest(self) -> int:
         """
         Busca el waypoint más cercano en una ventana amplia hacia adelante.
-        Igual que el Stanley corregido — cubre 4 segundos de movimiento.
+
+        Problema con densidad alta (< 1 cm/wp):
+          A 0.55 m/s con waypoints cada 0.5 cm el carro avanza ~110 wp/s.
+          Si la velocidad reportada es baja al inicio (aceleración),
+          la ventana calculada es pequeña y el índice se escapa.
+
+        Solución: usar la velocidad MÁXIMA posible (speed param) para
+          calcular la ventana, no la velocidad instantánea. Y fijar un
+          mínimo de 600 wp (~5 s de margen a 110 wp/s).
         """
         if self._n > 10:
             d_sample = dist2d(
                 (self._waypoints[0][0], self._waypoints[0][1]),
                 (self._waypoints[9][0], self._waypoints[9][1])
             ) / 9.0
-            wp_per_sec = abs(self._v) / d_sample if d_sample > 1e-4 and self._v != 0 else 30
+            # Usar velocidad máxima (speed), no la instantánea
+            v_max = max(abs(self._v), self._speed)
+            wp_per_sec = v_max / d_sample if d_sample > 1e-4 else 50
         else:
-            wp_per_sec = 30
+            wp_per_sec = 50
 
-        look = max(150, int(wp_per_sec * 4))
+        # Mínimo 600 wp o 6 segundos a velocidad máxima
+        look  = max(600, int(wp_per_sec * 6))
         start = max(0,       self._nearest_idx - 3)
         end   = min(self._n, self._nearest_idx + look)
 
@@ -587,4 +598,3 @@ def main(args=None):
 
 if __name__ == '__main__':
     main()
-    

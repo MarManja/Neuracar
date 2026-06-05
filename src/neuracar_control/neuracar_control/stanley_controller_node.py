@@ -2,7 +2,7 @@
 """
 =======================================================================
  Stanley Controller — Neuracar
- Proyecto: Neuracar
+ Proyecto: Neuracar / Smart Mobility
 -----------------------------------------------------------------------
  Controlador Stanley para seguimiento de trayectoria CSV con:
    - Rutas estructuradas en neuracar_control/data/
@@ -234,7 +234,7 @@ def compute_analysis(ref: List[Waypoint],
     with open(txt_out, 'w') as f:
         f.write(f'{sep}\n')
         f.write(f' STANLEY CONTROLLER — REPORTE DE ANÁLISIS\n')
-        f.write(f' Neuracar \n')
+        f.write(f' Neuracar / Smart Mobility\n')
         f.write(f'{sep}\n')
         f.write(f' Prueba        : {run_name}\n')
         f.write(f' Fecha         : {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}\n')
@@ -524,8 +524,10 @@ class StanleyController(Node):
         else:
             wp_per_sec = 30
 
-        # Ventana: 3 hacia atrás, mínimo 150 o 4 s hacia adelante
-        look_ahead = max(150, int(wp_per_sec * 4))
+        # Ventana: 3 hacia atrás, mínimo 600 o 6 s a velocidad máxima
+        v_max = max(abs(self._v), self._speed)
+        wp_per_sec = v_max / d_sample if d_sample > 1e-4 else 50
+        look_ahead = max(600, int(wp_per_sec * 6))
         search_start = max(0,        self._idx - 3)
         search_end   = min(self._n,  self._idx + look_ahead)
 
