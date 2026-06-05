@@ -31,6 +31,7 @@ setup(
             'stanley_lane_follower_node = neuracar_control.stanley_lane_follower_node:main',
             'path_recorder_node = neuracar_control.path_recorder_node:main',  
             'stanley_controller_node = neuracar_control.stanley_controller_node:main',
+            'pure_pursuit_node = neuracar_control.pure_pursuit_node:main',
         ],
     },
 )
