@@ -12,6 +12,12 @@ Publica:
 Controladores:
   throttle > 0 bloqueado si obstacle_alert       (frente)
   throttle < 0 bloqueado si obstacle_alert_rear  (atrás)
+
+Parámetros clave:
+  lidar_front_offset_rad  float  math.pi  — Neuracar cable atrás: frente = π rad
+  lidar_rear_offset_rad   float  0.0      — trasero = 0 rad (cable)
+  Si cambias el montaje del LiDAR solo ajusta lidar_front_offset_rad;
+  el trasero es siempre front + π (mod 2π).
 """
 
 import math
@@ -34,10 +40,11 @@ class ObstacleDetectorNode(Node):
         self.declare_parameter('angle_range_low_deg',   22.5)
         self.declare_parameter('angle_range_high_deg',  30.0)
         self.declare_parameter('velocity_threshold',    1.0)
-        self.declare_parameter('lidar_front_offset_rad', 0.0)
-        # Offset trasero: por defecto π rad desde el frente (180°).
-        # Si el LiDAR está rotado, ajustar: rear = front + π (mod 2π)
-        self.declare_parameter('lidar_rear_offset_rad', math.pi)
+        # Neuracar (cable atrás): frente del vehículo = π en frame raw del LiDAR
+        # QCar (cable derecha):   frente = -π/2 (-90°)
+        # Ajusta solo este valor si cambias el montaje físico.
+        self.declare_parameter('lidar_front_offset_rad', math.pi)
+        self.declare_parameter('lidar_rear_offset_rad',  0.0)
         self.declare_parameter('debug_mode', False)
 
         self._dist_thr  = self.get_parameter('distance_threshold').value
@@ -87,37 +94,25 @@ class ObstacleDetectorNode(Node):
         """
         Retorna (detected: bool, min_dist: float) para una ventana
         centrada en center_offset_rad con ancho ±angle_range.
-        Maneja el wrap-around del ángulo (e.g. rear a π cuando scan
-        va de -π a +π).
+        Usa ángulos relativos con wrap-around correcto — funciona
+        aunque el offset quede fuera de [angle_min, angle_max].
         """
-        angle_min  = msg.angle_min
-        angle_inc  = msg.angle_increment
-        n          = len(ranges)
-        half_idx   = int(np.radians(self._angle_range) / angle_inc)
+        angles = msg.angle_min + np.arange(len(ranges)) * msg.angle_increment
 
-        # Normalizar offset al rango [angle_min, angle_max]
-        angle_max = angle_min + angle_inc * (n - 1)
-        offset = center_offset_rad
-        # Wrap al rango del scan
-        while offset < angle_min:
-            offset += 2 * math.pi
-        while offset > angle_max:
-            offset -= 2 * math.pi
+        # Ángulo de cada rayo relativo al centro de la ventana, wrap a (−π, π]
+        rel      = (angles - center_offset_rad + np.pi) % (2 * np.pi) - np.pi
+        half_rad = np.radians(self._angle_range)
+        window   = np.abs(rel) <= half_rad
 
-        center_idx = int((offset - angle_min) / angle_inc)
-        center_idx = max(0, min(n - 1, center_idx))
+        valid     = (np.isfinite(ranges) &
+                     (ranges > msg.range_min) &
+                     (ranges < msg.range_max))
+        in_window = window & valid
+        close     = ranges < self._dist_thr
 
-        start_idx = max(0, center_idx - half_idx)
-        end_idx   = min(n - 1, center_idx + half_idx)
-
-        detected = False
-        min_dist = float('inf')
-        for i in range(start_idx, end_idx + 1):
-            d = ranges[i]
-            if msg.range_min < d < self._dist_thr:
-                detected = True
-                min_dist = min(min_dist, d)
-
+        detected = bool(np.any(in_window & close))
+        min_dist = (float(np.min(ranges[in_window]))
+                    if np.any(in_window) else float('inf'))
         return detected, min_dist
 
     # ── LiDAR callback ──────────────────────────────────────────────
@@ -133,15 +128,13 @@ class ObstacleDetectorNode(Node):
                 self.get_logger().info(
                     f'Más cercano: {ranges[idx]:.2f}m a {ang:.1f}°')
 
-        # Detección frontal
+        # Detección frontal y trasera
         front_detected, front_dist = self._check_window(ranges, msg, self._front)
-
-        # Detección trasera
-        rear_detected, rear_dist = self._check_window(ranges, msg, self._rear)
+        rear_detected,  rear_dist  = self._check_window(ranges, msg, self._rear)
 
         # Publicar alertas
-        front_msg      = Bool(); front_msg.data = front_detected
-        rear_msg       = Bool(); rear_msg.data  = rear_detected
+        front_msg = Bool(); front_msg.data = front_detected
+        rear_msg  = Bool(); rear_msg.data  = rear_detected
         self._pub_front.publish(front_msg)
         self._pub_rear.publish(rear_msg)
 

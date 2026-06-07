@@ -31,6 +31,9 @@ setup(
             'lane_detector_node = neuracar_perception.lane_detector_node:main',
             'velocity_pid_node = neuracar_perception.velocity_pid_node:main',
             'pid_dashboard_node = neuracar_perception.pid_dashboard_node:main',
+            'pid_tuner = neuracar_perception.pid_tuner:main',
+            'pid_tuner_pista = neuracar_perception.pid_tuner_pista:main',
+            'pid_tuner_linea = neuracar_perception.pid_tuner_linea:main',
         ],
     },
 )
