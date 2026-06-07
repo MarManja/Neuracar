@@ -1,0 +1,32 @@
+========================================================
+ STANLEY CONTROLLER — REPORTE DE ANÁLISIS
+ Neuracar 
+========================================================
+ Prueba        : vuelta_03
+ Fecha         : 2026-06-04 17:51:01
+ Duración      : 40.9 s
+ Vueltas       : 0
+ Paradas lidar : 10
+ Puntos real   : 409
+ Waypoints ref : 495
+========================================================
+ MÉTRICAS CUANTITATIVAS
+========================================================
+  RMS CTE        : 1.5521 m
+  CTE máximo     : 2.9816 m
+  CTE medio      : +1.1595 m
+  % pts < 5 cm   : 6.8%
+  % pts < 10 cm  : 8.3%
+========================================================
+ ANÁLISIS CUALITATIVO
+========================================================
+  Calidad general : DEFICIENTE — revisar odometría, velocidad o ganancias
+  Picos           : Pico alto (2.982 m) — revisar curvas o inicio de ruta
+  Sesgo lateral   : Sesgo sistemático hacia la derecha (+1.159 m) — ajustar target_x_ratio o revisar calibración IMU
+  Obstáculos      : 10 parada(s) — verificar clearance del detector
+========================================================
+ ARCHIVOS
+========================================================
+  CSV análisis : /home/qcar/Workspaces/Neuracar/src/neuracar_control/data/runs/vuelta_03_20260604_175101_analysis.csv
+  Reporte txt  : /home/qcar/Workspaces/Neuracar/src/neuracar_control/data/runs/vuelta_03_20260604_175101_report.txt
+========================================================

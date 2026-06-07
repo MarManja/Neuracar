@@ -34,6 +34,7 @@ setup(
             'pid_tuner = neuracar_perception.pid_tuner:main',
             'pid_tuner_pista = neuracar_perception.pid_tuner_pista:main',
             'pid_tuner_linea = neuracar_perception.pid_tuner_linea:main',
+            'pid_tuner_recta = neuracar_perception.pid_tuner_recta:main',
         ],
     },
 )

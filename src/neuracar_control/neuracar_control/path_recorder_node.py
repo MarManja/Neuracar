@@ -108,7 +108,7 @@ class PathRecorder(Node):
 
         # ── Parámetros ─────────────────────────────────────────────
         self.declare_parameter('run_name',        '')
-        self.declare_parameter('downsample_dist', 0.0)  # sin filtro por defecto
+        self.declare_parameter('downsample_dist', 0.05)  # con 5 cm de filtro por defecto
 
         run_name = self.get_parameter('run_name').value
         if not run_name:

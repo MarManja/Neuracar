@@ -1,0 +1,27 @@
+========================================================
+ PURE PURSUIT — REPORTE DE ANÁLISIS
+ Neuracar
+========================================================
+ Prueba        : vuelta_05_5cm
+ Fecha         : 2026-06-04 20:46:17
+ Duración      : 25.9 s
+ Vueltas       : 0
+ Paradas lidar : 3
+ Puntos real   : 258
+ Waypoints ref : 164
+========================================================
+ MÉTRICAS CUANTITATIVAS
+========================================================
+  RMS CTE        : 0.9462 m
+  CTE máximo     : 1.7181 m
+  CTE medio      : +0.6003 m
+  % pts < 5 cm   : 15.5%
+  % pts < 10 cm  : 18.2%
+========================================================
+ ANÁLISIS CUALITATIVO
+========================================================
+  Calidad general : DEFICIENTE — revisar odometría, velocidad o ganancias
+  Picos           : Pico alto (1.718 m) — revisar curvas o inicio de ruta
+  Sesgo lateral   : Sesgo hacia la derecha (+0.600 m) — ajustar lookahead o revisar calibración IMU
+  Obstáculos      : 3 parada(s)
+========================================================
