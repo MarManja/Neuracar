@@ -1,12 +1,12 @@
 Stanley Controller — Reporte
 ========================================
 Trayectoria : vuelta_05_5cm
-Duración    : 5.1 s
-Vueltas     : 0
+Duración    : 15.1 s
+Vueltas     : 1
 Paradas obs.: 0
 Terminó por obstáculo: no
 
-RMS CTE     : 0.0072 m  → EXCELENTE
-CTE máximo  : 0.0126 m
-% < 5 cm    : 100.0%
+RMS CTE     : 0.0555 m  → BUENO
+CTE máximo  : 0.0901 m
+% < 5 cm    : 53.0%
 % < 10 cm   : 100.0%

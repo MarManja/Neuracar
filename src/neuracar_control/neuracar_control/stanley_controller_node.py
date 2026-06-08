@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-stanley_controller_node.py — Neuracar v2.6
+stanley_controller_node.py — Neuracar v2.7
 ==========================================
 Stanley baseline configurado con los mismos defaults que funcionaron en
 Pure Pursuit v2.5, pero usando lógica Stanley:
@@ -38,6 +38,8 @@ import matplotlib.pyplot as plt
 
 import rclpy
 from rclpy.node import Node
+from rclpy.qos import (QoSProfile, QoSReliabilityPolicy,
+                        QoSHistoryPolicy, QoSDurabilityPolicy)
 from geometry_msgs.msg import TwistStamped, PoseStamped, Vector3Stamped
 from nav_msgs.msg import Odometry, Path
 from std_msgs.msg import Bool, Float32
@@ -75,7 +77,7 @@ def resolve_data_dir() -> str:
 
 def resolve_runs_dir() -> str:
     # Misma carpeta usada por Pure Pursuit v2.x para comparar resultados.
-    d = os.path.join(_base_data_dir(), 'runs2')
+    d = os.path.join(_base_data_dir(), 'runs_stanley')
     os.makedirs(d, exist_ok=True)
     return d
 
@@ -325,7 +327,7 @@ class StanleyControllerNode(Node):
         self.declare_parameter('max_loops', 1)
 
         # LiDAR
-        self.declare_parameter('stop_on_obstacle', True)
+        self.declare_parameter('stop_on_obstacle', False)
 
         self._run_name = str(self.get_parameter('run_name').value)
         self._L = float(self.get_parameter('wheelbase').value)
@@ -389,7 +391,12 @@ class StanleyControllerNode(Node):
         # Publishers
         self._pub_vel = self.create_publisher(Float32, '/neuracar/cmd_velocity', 10)
         self._pub_str = self.create_publisher(Float32, '/neuracar/cmd_steering', 10)
-        self._pub_ref = self.create_publisher(Path, '/neuracar/path_reference', 10)
+        qos_path_ref = QoSProfile(
+            reliability=QoSReliabilityPolicy.RELIABLE,
+            history=QoSHistoryPolicy.KEEP_LAST,
+            depth=1,
+            durability=QoSDurabilityPolicy.TRANSIENT_LOCAL)
+        self._pub_ref = self.create_publisher(Path, '/neuracar/path_reference', qos_path_ref)
         self._pub_real = self.create_publisher(Path, '/neuracar/path_real', 10)
         # Backup de seguridad: si el PID tarda en recibir cero, también se publica
         # un user_command directo en cero al cerrar.
@@ -407,7 +414,7 @@ class StanleyControllerNode(Node):
         self.create_timer(1.00, self._publish_ref_once)
 
         self.get_logger().info('=' * 60)
-        self.get_logger().info(' STANLEY CONTROLLER v2.6 — baseline + hard stop')
+        self.get_logger().info(' STANLEY CONTROLLER v2.7 — baseline + hard stop + ref periódica')
         self.get_logger().info('=' * 60)
         self.get_logger().info(
             f'  run={self._run_name} | {self._n} wp | longitud={self._path_len:.2f} m')
@@ -468,9 +475,8 @@ class StanleyControllerNode(Node):
             ))
 
     def _publish_ref_once(self):
-        if self._ref_published:
-            return
-        self._ref_published = True
+        # Se publica periódicamente para que el dashboard pueda abrirse antes o después
+        # del controlador y aun así recibir la referencia.
         path = Path()
         path.header.stamp = self.get_clock().now().to_msg()
         path.header.frame_id = 'odom'

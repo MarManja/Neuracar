@@ -1,42 +1,46 @@
 #!/usr/bin/env python3
 """
 =======================================================================
- Lane Detector — Neuracar  (RealSense D415)
- Proyecto: Neuracar 
+ Lane Detector — Neuracar  (RealSense D415)  v2.2
+ Proyecto: Neuracar
 -----------------------------------------------------------------------
  Detecta la línea amarilla de la pista Quanser mediante segmentación
  HSV y publica el error lateral normalizado para el controlador
  Stanley Lane Follower.
 
- Tópicos RealSense D415:
-   /camera/color/image_raw         (sensor_msgs/Image)        30 Hz
-   /camera/color/image_raw/compressed  (sensor_msgs/CompressedImage)
+ Geometría de cámara (Neuracar):
+   Altura:       131.5 mm del piso a la base de la cámara
+   Inclinación:  11° hacia abajo
+   Visión:       ~170 mm al frente del carro (borde externo)
+                 La línea aparece en la franja 50–90% vertical de imagen
 
- Suscribe (configurable por parámetro):
-   /camera/color/image_raw  OR  /camera/color/image_raw/compressed
+ Topic real RealSense D415 en este setup:
+   /camera/camera/color/image_raw   ← usar con remapping
+
+ Lanzar con:
+   ros2 run neuracar_perception lane_detector_node --ros-args \
+     -r /camera/color/image_raw:=/camera/camera/color/image_raw
 
  Publica:
    /neuracar/lane_error  (geometry_msgs/Vector3Stamped)
        vector.x = cross-track error normalizado [-1, 1]
-                  negativo = línea a la izquierda del centro
-                  positivo = línea a la derecha del centro
        vector.y = confianza de detección [0, 1]
        vector.z = cx en píxeles (debug)
 
    /neuracar/lane_image  (sensor_msgs/CompressedImage)   [debug]
-       Imagen anotada con ROI y centroide detectado
 
  Parámetros ROS2:
-   use_compressed  (bool)  — usar imagen comprimida  [default: False]
-   roi_top         (float) — fracción superior de ROI [default: 0.55]
-   target_x_ratio  (float) — x objetivo normalizado   [default: 0.5]
-   min_area        (int)   — área mínima de blob px²   [default: 3000]
-   max_cx_jump     (int)   — salto máximo de cx px     [default: 150]
-   publish_debug   (bool)  — publicar imagen debug     [default: True]
+   use_compressed   (bool)  — usar imagen comprimida     [default: False]
+   roi_top          (float) — fracción superior de ROI   [default: 0.50]
+   roi_bottom       (float) — fracción inferior de ROI   [default: 0.95]
+   target_x_ratio   (float) — x objetivo normalizado     [default: 0.50]
+   min_area         (int)   — área mínima de blob px²    [default: 2000]
+   max_area         (int)   — área máxima de blob px²    [default: 60000]
+   max_cx_jump      (int)   — salto máximo de cx px      [default: 200]
+   publish_debug    (bool)  — publicar imagen debug      [default: True]
 
- Rangos HSV para línea amarilla (pista Quanser):
-   H: 15–35  S: 80–255  V: 80–255
-   (ajusta con parámetros hsv_low_h/s/v, hsv_high_h/s/v si es necesario)
+ Rangos HSV para línea amarilla (pista Quanser, luz interior):
+   H: 20–30  S: 120–255  V: 120–255
 =======================================================================
 """
 
@@ -48,9 +52,6 @@ from rclpy.qos import qos_profile_sensor_data
 from geometry_msgs.msg import Vector3Stamped
 from sensor_msgs.msg import Image, CompressedImage
 
-# RealSense D415: imagen a color — NO requiere pipeline GStreamer
-# Solo se usa cv_bridge o decodificación manual con numpy
-
 
 class LaneDetector(Node):
 
@@ -59,23 +60,27 @@ class LaneDetector(Node):
 
         # ── Parámetros ─────────────────────────────────────────────
         self.declare_parameter('use_compressed',  False)
-        self.declare_parameter('roi_top',         0.55)
+        self.declare_parameter('roi_top',         0.50)   # línea aparece desde el 50%
+        self.declare_parameter('roi_bottom',      0.95)   # deja margen inferior
         self.declare_parameter('target_x_ratio',  0.50)
-        self.declare_parameter('min_area',        3000)
-        self.declare_parameter('max_cx_jump',     150)
+        self.declare_parameter('min_area',        2000)
+        self.declare_parameter('max_area',        60000)
+        self.declare_parameter('max_cx_jump',     200)
         self.declare_parameter('publish_debug',   True)
         # Rango HSV — línea amarilla pista Quanser
-        self.declare_parameter('hsv_low_h',   15)
-        self.declare_parameter('hsv_low_s',   80)
-        self.declare_parameter('hsv_low_v',   80)
-        self.declare_parameter('hsv_high_h',  35)
+        self.declare_parameter('hsv_low_h',   20)
+        self.declare_parameter('hsv_low_s',   120)
+        self.declare_parameter('hsv_low_v',   120)
+        self.declare_parameter('hsv_high_h',  30)
         self.declare_parameter('hsv_high_s',  255)
         self.declare_parameter('hsv_high_v',  255)
 
         self._use_compressed  = self.get_parameter('use_compressed').value
         self._roi_top         = self.get_parameter('roi_top').value
+        self._roi_bottom      = self.get_parameter('roi_bottom').value
         self._target_x_ratio  = self.get_parameter('target_x_ratio').value
         self._min_area        = self.get_parameter('min_area').value
+        self._max_area        = self.get_parameter('max_area').value
         self._max_cx_jump     = self.get_parameter('max_cx_jump').value
         self._publish_debug   = self.get_parameter('publish_debug').value
 
@@ -103,7 +108,7 @@ class LaneDetector(Node):
             self._pub_img = self.create_publisher(
                 CompressedImage, '/neuracar/lane_image', qos_profile_sensor_data)
 
-        # ── Subscriber (imagen RealSense D415) ─────────────────────
+        # ── Subscriber ─────────────────────────────────────────────
         if self._use_compressed:
             self.create_subscription(
                 CompressedImage,
@@ -121,28 +126,24 @@ class LaneDetector(Node):
             )
             self.get_logger().info('Suscrito a imagen raw D415')
 
-        self.get_logger().info('=== Lane Detector iniciado ===')
+        self.get_logger().info('=== Lane Detector v2.2 iniciado ===')
+        self.get_logger().info(f'  HSV bajo:  {self._hsv_low.tolist()}')
+        self.get_logger().info(f'  HSV alto:  {self._hsv_high.tolist()}')
         self.get_logger().info(
-            f'  HSV bajo:  {self._hsv_low.tolist()}')
+            f'  ROI: {self._roi_top*100:.0f}% – {self._roi_bottom*100:.0f}%  '
+            f'target_x: {self._target_x_ratio*100:.0f}%')
         self.get_logger().info(
-            f'  HSV alto: {self._hsv_high.tolist()}')
-        self.get_logger().info(
-            f'  ROI top: {self._roi_top*100:.0f}%  |  target_x: {self._target_x_ratio*100:.0f}%')
+            f'  Área válida: [{self._min_area}, {self._max_area}] px²')
 
     # ── Callbacks de imagen ────────────────────────────────────────
     def _image_cb(self, msg: Image):
-        """Convierte sensor_msgs/Image a numpy BGR."""
-        # Decodificación manual sin cv_bridge
-        dtype = np.uint8
-        frame = np.frombuffer(msg.data, dtype=dtype).reshape(
+        frame = np.frombuffer(msg.data, dtype=np.uint8).reshape(
             msg.height, msg.width, -1)
-        # D415 publica en bgr8 o rgb8
         if msg.encoding == 'rgb8':
             frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
         self._process(frame, msg.header.stamp)
 
     def _compressed_cb(self, msg: CompressedImage):
-        """Decodifica imagen comprimida JPEG."""
         np_arr = np.frombuffer(msg.data, np.uint8)
         frame   = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
         if frame is None:
@@ -153,39 +154,48 @@ class LaneDetector(Node):
     def _process(self, frame: np.ndarray, stamp):
         h, w = frame.shape[:2]
 
-        # ── ROI: solo la mitad inferior de la imagen ──────────────
-        roi_y = int(h * self._roi_top)
-        roi   = frame[roi_y:h, :]
+        # ── ROI configurable ──────────────────────────────────────
+        roi_y_top = int(h * self._roi_top)
+        roi_y_bot = int(h * self._roi_bottom)
+        roi = frame[roi_y_top:roi_y_bot, :]
 
         # ── Segmentación HSV ──────────────────────────────────────
         hsv  = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
         mask = cv2.inRange(hsv, self._hsv_low, self._hsv_high)
 
-        # ── Morfología para limpiar ruido ─────────────────────────
+        # ── Morfología ────────────────────────────────────────────
         kernel = np.ones((5, 5), np.uint8)
         mask   = cv2.erode(mask,  kernel, iterations=1)
         mask   = cv2.dilate(mask, kernel, iterations=2)
 
-        # ── Centroide ─────────────────────────────────────────────
-        M    = cv2.moments(mask)
-        area = M['m00']
+        # ── Contorno más grande dentro del rango de área ──────────
+        contours, _ = cv2.findContours(
+            mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
-        valid = False
-        cx    = None
+        valid      = False
+        cx         = None
+        cy_roi     = None
+        best_area  = 0
         confidence = 0.0
 
-        if area > self._min_area:
-            cx_candidate = int(M['m10'] / area)
-
-            if (self._last_cx is None or
-                    abs(cx_candidate - self._last_cx) < self._max_cx_jump):
-                cx         = cx_candidate
-                valid      = True
-                confidence = min(1.0, area / (self._min_area * 10))
-            else:
-                self.get_logger().warn(
-                    f'Salto brusco ignorado: cx={cx_candidate} last={self._last_cx}',
-                    throttle_duration_sec=0.5)
+        for cnt in contours:
+            area = cv2.contourArea(cnt)
+            if self._min_area < area < self._max_area and area > best_area:
+                M_cnt = cv2.moments(cnt)
+                if M_cnt['m00'] > 0:
+                    cx_candidate = int(M_cnt['m10'] / M_cnt['m00'])
+                    if (self._last_cx is None or
+                            abs(cx_candidate - self._last_cx) < self._max_cx_jump):
+                        best_area  = area
+                        cx         = cx_candidate
+                        cy_roi     = int(M_cnt['m01'] / M_cnt['m00'])
+                        valid      = True
+                        confidence = min(1.0, area / (self._min_area * 10))
+                    else:
+                        self.get_logger().warn(
+                            f'Salto brusco ignorado: cx={cx_candidate} '
+                            f'last={self._last_cx}  area={int(area)}',
+                            throttle_duration_sec=0.5)
 
         # ── Publicar error lateral ────────────────────────────────
         err_msg = Vector3Stamped()
@@ -196,23 +206,21 @@ class LaneDetector(Node):
             self._lost_count = 0
             self._last_cx    = cx
             target_x = int(w * self._target_x_ratio)
-            # Error normalizado: [-1, 1]  positivo = línea a la derecha
             error = (cx - target_x) / float(w / 2)
             err_msg.vector.x = float(error)
             err_msg.vector.y = confidence
             err_msg.vector.z = float(cx)
 
             self.get_logger().info(
-                f'cx={cx} err={error:+.3f} area={int(area)} conf={confidence:.2f}',
+                f'cx={cx}  err={error:+.3f}  area={int(best_area)}  conf={confidence:.2f}',
                 throttle_duration_sec=0.3)
         else:
             self._lost_count += 1
             if self._lost_count > self._MAX_LOST:
                 self._last_cx = None
-            # Mantiene el último error conocido con confianza 0
             err_msg.vector.x = 0.0
             err_msg.vector.y = 0.0
-            err_msg.vector.z = -1.0  # indicador de "sin detección"
+            err_msg.vector.z = -1.0
 
             self.get_logger().warn(
                 f'Línea no detectada ({self._lost_count})',
@@ -223,20 +231,29 @@ class LaneDetector(Node):
         # ── Imagen de debug ───────────────────────────────────────
         if self._publish_debug:
             debug = frame.copy()
-            # Dibujar ROI
-            cv2.rectangle(debug, (0, roi_y), (w, h), (0, 255, 0), 2)
-            # Dibujar máscara sobre ROI (canal verde)
+
+            # ROI activo (verde)
+            cv2.rectangle(debug, (0, roi_y_top), (w, roi_y_bot), (0, 255, 0), 2)
+
+            # Máscara amarilla superpuesta en ROI
             mask_color = cv2.cvtColor(mask, cv2.COLOR_GRAY2BGR)
-            mask_color[:, :, 0] = 0  # quita canal azul
-            mask_color[:, :, 2] = 0  # quita canal rojo
-            debug[roi_y:h, :] = cv2.addWeighted(
-                debug[roi_y:h, :], 0.6, mask_color, 0.4, 0)
-            # Dibujar centroide
+            mask_color[:, :, 0] = 0
+            mask_color[:, :, 2] = 0
+            debug[roi_y_top:roi_y_bot, :] = cv2.addWeighted(
+                debug[roi_y_top:roi_y_bot, :], 0.6, mask_color, 0.4, 0)
+
+            # Centroide y línea objetivo
             if valid:
-                cy_roi = int(M['m01'] / area)
-                cv2.circle(debug, (cx, roi_y + cy_roi), 10, (0, 0, 255), -1)
-                cv2.line(debug, (int(w * self._target_x_ratio), roi_y),
-                         (int(w * self._target_x_ratio), h), (255, 0, 0), 2)
+                cv2.circle(debug, (cx, roi_y_top + cy_roi), 10, (0, 0, 255), -1)
+                cv2.line(debug,
+                         (int(w * self._target_x_ratio), roi_y_top),
+                         (int(w * self._target_x_ratio), roi_y_bot),
+                         (255, 0, 0), 2)
+
+            # Info en imagen
+            status = f'area={int(best_area)} cx={cx}' if valid else 'NO DETECT'
+            cv2.putText(debug, status, (10, roi_y_top + 20),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 2)
 
             _, buf = cv2.imencode('.jpg', debug, [cv2.IMWRITE_JPEG_QUALITY, 70])
             img_msg = CompressedImage()

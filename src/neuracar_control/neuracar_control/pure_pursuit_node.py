@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-pure_pursuit_node.py — Neuracar v2.5 baseline estático
+pure_pursuit_node.py — Neuracar v2.5 baseline estático + referencia periódica
 ======================================================
 
 Versión basada en la prueba que funcionó:
@@ -24,7 +24,7 @@ Entradas:
 Salidas:
   /neuracar/cmd_velocity          std_msgs/Float32 [m/s]
   /neuracar/cmd_steering          std_msgs/Float32 [-1, 1]
-  /neuracar/path_reference        nav_msgs/Path
+  /neuracar/path_reference        nav_msgs/Path      — publicado periódicamente para dashboard
   /neuracar/path_real             nav_msgs/Path
 """
 
@@ -61,7 +61,7 @@ def resolve_data_dir() -> str:
 def resolve_runs_dir() -> str:
     d = os.path.join(
         os.path.expanduser("~/Workspaces/Neuracar/src/neuracar_control"),
-        "data", "runs2"
+        "data", "runs_pure_pursuit"
     )
     os.makedirs(d, exist_ok=True)
     return d
@@ -250,7 +250,7 @@ class PurePursuitNode(Node):
         self.declare_parameter('nearest_back_steps', 0)
         self.declare_parameter('nearest_fwd_steps', 35)
         self.declare_parameter('monotonic_index', True)
-        self.declare_parameter('stop_on_obstacle', True)
+        self.declare_parameter('stop_on_obstacle', False)
 
         run = str(self.get_parameter('run_name').value)
         if not run:
@@ -318,7 +318,9 @@ class PurePursuitNode(Node):
         self.create_timer(0.10, self._record_pose)
         self.create_timer(0.05, self._control_loop)
         self.create_timer(0.50, self._publish_paths)
-        self.create_timer(1.00, self._publish_ref_once)
+        # Publica la referencia periódicamente para que el dashboard la reciba
+        # aunque se abra después del controlador.
+        self.create_timer(1.00, self._publish_ref_periodic)
 
         self.get_logger().info('=' * 60)
         self.get_logger().info(' PURE PURSUIT v2.5 — baseline estático probado')
@@ -377,10 +379,13 @@ class PurePursuitNode(Node):
         self._real_track.append((self._x, self._y, self._yaw,
                                  time.time() - self._start_time))
 
-    def _publish_ref_once(self):
-        if self._ref_published:
-            return
-        self._ref_published = True
+    def _publish_ref_periodic(self):
+        """Publica la trayectoria de referencia de forma periódica.
+
+        No afecta la lógica de control; solo asegura que el dashboard pueda
+        recibir /neuracar/path_reference aunque se abra después de arrancar
+        el controlador.
+        """
         path = Path()
         path.header.stamp = self.get_clock().now().to_msg()
         path.header.frame_id = 'odom'
@@ -393,7 +398,9 @@ class PurePursuitNode(Node):
             ps.pose.orientation.z = math.sin(theta / 2.0)
             ps.pose.orientation.w = math.cos(theta / 2.0)
             path.poses.append(ps)
+
         self._pub_ref.publish(path)
+        self._ref_published = True
 
     def _publish_paths(self):
         if not self._real_track:

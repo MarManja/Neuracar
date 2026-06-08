@@ -38,16 +38,25 @@ from std_msgs.msg import Float32
 LUT = List[Tuple[float, float]]  # (velocidad_m_s, throttle)
 
 
-# ── LUT calibrada en línea recta ─────────────────────────────────────
-# Zona no usable/inestable: 0.00 - 0.82 m/s aprox.
-# Para setpoints menores a 0.82 m/s se manda throttle post-salto.
+# ── LUT calibrada en línea recta (2026-06-07) ────────────────────────
+# Fuente: lut_recta_20260607_180527.csv  steering=0.0  NiMH 7S 8.4V
+# 18 puntos medidos, zona densa 0.58-0.70 para detectar salto preciso.
+#
+# Salto detectado: throttle 0.62→0.63 = 0.437→0.734 m/s
+# Zona 0.63-0.70: promediada (velocidades similares ~0.73-0.81 m/s)
+# Puntos 0.80 y 0.85 promediados (medición ruidosa, invertidos entre sí)
+# Puntos 0.95 y 1.00 descartados (encoder saturó — excedió rango)
+#
+# ZONA NO USABLE: 0.00 - 0.46 m/s (throttle < 0.58 no arranca)
+# ZONA INESTABLE: 0.46 - 0.76 m/s (salto abrupto ESC entre 0.62→0.63)
 _LUT_STRAIGHT: LUT = [
-    (0.00, 0.000),
-    (0.45, 0.600),
-    (0.82, 0.650),
-    (1.10, 0.750),
-    (1.38, 0.850),
-    (2.15, 0.920),
+    (0.000, 0.000),   # motor parado
+    (0.464, 0.610),   # mínimo que arranca en recta (pre-salto)
+    # ── SALTO: throttle 0.62→0.63 = 0.437→0.734 m/s ──
+    (0.756, 0.661),   # post-salto — promedio zona 0.63-0.70
+    (1.036, 0.750),
+    (1.360, 0.825),   # promedio mediciones 0.80 y 0.85
+    (1.577, 0.900),   # máximo medido válido
 ]
 
 # ── LUT calibrada en curva / steering alto ───────────────────────────
@@ -115,14 +124,15 @@ def feedforward_from_lut(v_target: float, lut: LUT,
 
 
 # ── Gain Scheduling ─────────────────────────────────────────────────
-# Mantengo tus gains; si se desea, luego se puede separar también por steering.
+# Fuente: pid_tuner_recta_20260607 — barrido secuencial kp→ki→kd
+# Resultado: kp=0.02, ki=0.25, kd=0.02, max_int=0.20
+# Velocidades usables en recta: 0.756 - 1.577 m/s
 _GAIN_SCHEDULE = [
     # v_m/s   kp     ki     kd     max_int
-    (0.55,  0.05,  0.20,  0.01,   0.20),
-    (0.82,  0.05,  0.20,  0.01,   0.20),
-    (1.10,  0.05,  0.20,  0.01,   0.20),
-    (1.38,  0.05,  0.25,  0.01,   0.15),
-    (2.15,  0.03,  0.10,  0.01,   0.08),
+    (0.756,  0.02,  0.25,  0.02,   0.20),  # post-salto mínimo
+    (1.036,  0.02,  0.25,  0.02,   0.20),  # calibrado recta 2026-06-07
+    (1.360,  0.02,  0.25,  0.02,   0.20),  # calibrado recta 2026-06-07
+    (1.577,  0.02,  0.20,  0.02,   0.15),  # máximo medido
 ]
 
 
@@ -166,12 +176,12 @@ class VelocityPIDNode(Node):
         self.declare_parameter('freq_hz',      50.0)
 
         # Parámetros nuevos para mezcla de LUTs
-        self.declare_parameter('steer_lut_start', 0.25)  # desde aquí empieza a mezclar a LUT curva
-        self.declare_parameter('steer_lut_full',  0.90)  # aquí ya usa 100% LUT curva
-        self.declare_parameter('straight_stable_min_v', 0.82)
-        self.declare_parameter('straight_stable_min_throttle', 0.650)
-        self.declare_parameter('curve_stable_min_v', 0.59)
-        self.declare_parameter('curve_stable_min_throttle', 0.650)
+        self.declare_parameter('steer_lut_start', 0.25)
+        self.declare_parameter('steer_lut_full',  0.90)
+        self.declare_parameter('straight_stable_min_v',        0.756)  # calibrado 2026-06-07
+        self.declare_parameter('straight_stable_min_throttle', 0.661)  # calibrado 2026-06-07
+        self.declare_parameter('curve_stable_min_v',           0.590)  # calibrado pista5
+        self.declare_parameter('curve_stable_min_throttle',    0.650)  # calibrado pista5
 
         self._use_gs = bool(self.get_parameter('gain_scheduling').value)
         self._kp_fixed = float(self.get_parameter('kp').value)
@@ -213,7 +223,7 @@ class VelocityPIDNode(Node):
         self.pub_cmd = self.create_publisher(Vector3Stamped, '/neuracar/user_command', 10)
         self.create_timer(1.0 / self._freq, self._pid_loop)
 
-        self.get_logger().info('Velocity PID node v1.6 — steering-aware LUT')
+        self.get_logger().info('Velocity PID node v1.7 — LUT recta calibrada 2026-06-07')
         self.get_logger().info(
             f'  gain_scheduling={self._use_gs} max_throttle={self._max_thr} max_rate={self._max_rate}')
         self.get_logger().info(

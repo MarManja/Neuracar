@@ -73,8 +73,8 @@ def generate_launch_description():
             'enable_infra2': False,
 
             # Baja carga para Jetson
-            'rgb_camera.color_profile': '640x480x30',
-            'depth_module.depth_profile': '640x480x30',
+            'rgb_camera.color_profile': '640x480x15',
+            'depth_module.depth_profile': '640x480x15',
 
             # Desactivar cosas pesadas por ahora
             'pointcloud.enable': False,
@@ -104,31 +104,6 @@ def generate_launch_description():
             'scan_mode': 'Sensitivity'
         }]
     )
-
-    # micro_node = Node(
-    #     package='neuracar_sensors',
-    #     executable='esp32_bridge_node',
-    #     name='esp32_bridge',
-    #     output='screen',
-    #     condition=IfCondition(LaunchConfiguration('micro')),
-    #     parameters=[{
-    #         #'port': '/dev/esp32',
-    #         'port_sensores':   LaunchConfiguration('port_sensores'),
-    #         'port_actuadores': LaunchConfiguration('port_actuadores'),
-    #         'baudrate': 921600,
-
-    #         'wheel_radius': 0.033,
-    #         'gear_ratio': 9.246,
-
-    #         'watchdog_s': 0.5,
-
-    #         # Esto fuerza que llegue como bool, no como string "false"
-    #         'auto_shutdown': ParameterValue(
-    #             LaunchConfiguration('auto_shutdown'),
-    #             value_type=bool
-    #         ),
-    #     }]
-    # )
 
     # Nodo exclusivo de sensores — solo lee serial, sin actuadores
     sensores_node = Node(
