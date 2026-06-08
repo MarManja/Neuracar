@@ -1,0 +1,60 @@
+NEURACAR PID TUNING REPORT
+Fecha: 2026-06-05 15:09:40
+Settle: 4.0s  Measure: 5.0s
+======================================================================
+
+RANKING DE GAINS (por % tiempo dentro de ±8cm/s)
+----------------------------------------------------------------------
+  #1: kp=0.05 ki=0.15 kd=0.01 max_int=0.1 → promedio 27.8%
+  #2: kp=0.04 ki=0.12 kd=0.01 max_int=0.08 → promedio 18.0%
+  #3: kp=0.06 ki=0.1 kd=0.01 max_int=0.08 → promedio 15.2%
+  #4: kp=0.04 ki=0.08 kd=0.02 max_int=0.05 → promedio 11.1%
+  #5: kp=0.04 ki=0.08 kd=0.01 max_int=0.05 → promedio 7.9%
+
+
+DETALLE POR GAINS Y SETPOINT
+----------------------------------------------------------------------
+
+Gains 1: kp=0.04 ki=0.08 kd=0.01 max_int=0.05
+  0.3 m/s → real=1.405 err=-1.105 std=0.459 ok=1% conv=no convergiós → ✗ ERROR ALTO
+  0.5 m/s → real=1.451 err=-0.951 std=0.391 ok=0% conv=no convergiós → ✗ ERROR ALTO
+  1.0 m/s → real=1.327 err=-0.327 std=0.320 ok=28% conv=4.01s → ✗ ERROR ALTO
+  1.5 m/s → real=1.563 err=-0.063 std=0.181 ok=10% conv=4.1s → ✓ CONVERGIDO
+  2.0 m/s → real=1.758 err=+0.242 std=0.014 ok=0% conv=no convergiós → ✗ ERROR ALTO
+
+Gains 2: kp=0.04 ki=0.12 kd=0.01 max_int=0.08
+  0.3 m/s → real=1.314 err=-1.014 std=0.340 ok=0% conv=no convergiós → ✗ ERROR ALTO
+  0.5 m/s → real=1.527 err=-1.027 std=0.294 ok=0% conv=no convergiós → ✗ ERROR ALTO
+  1.0 m/s → real=1.501 err=-0.501 std=0.234 ok=8% conv=4.44s → ✗ ERROR ALTO
+  1.5 m/s → real=1.740 err=-0.240 std=0.179 ok=12% conv=4.24s → ✗ ERROR ALTO
+  2.0 m/s → real=1.944 err=+0.056 std=0.034 ok=70% conv=4.01s → ✓ CONVERGIDO
+
+Gains 3: kp=0.06 ki=0.1 kd=0.01 max_int=0.08
+  0.3 m/s → real=1.532 err=-1.232 std=0.351 ok=0% conv=no convergiós → ✗ ERROR ALTO
+  0.5 m/s → real=1.628 err=-1.128 std=0.290 ok=0% conv=no convergiós → ✗ ERROR ALTO
+  1.0 m/s → real=1.589 err=-0.589 std=0.211 ok=2% conv=5.1s → ✗ ERROR ALTO
+  1.5 m/s → real=1.797 err=-0.297 std=0.149 ok=6% conv=6.6s → ✗ ERROR ALTO
+  2.0 m/s → real=1.939 err=+0.061 std=0.039 ok=67% conv=4.02s → ✓ CONVERGIDO
+
+Gains 4: kp=0.04 ki=0.08 kd=0.02 max_int=0.05
+  0.3 m/s → real=1.161 err=-0.861 std=0.382 ok=1% conv=no convergiós → ✗ ERROR ALTO
+  0.5 m/s → real=1.296 err=-0.796 std=0.255 ok=0% conv=no convergiós → ✗ ERROR ALTO
+  1.0 m/s → real=1.623 err=-0.623 std=0.240 ok=0% conv=no convergiós → ✗ ERROR ALTO
+  1.5 m/s → real=1.604 err=-0.104 std=0.101 ok=43% conv=4.16s → ~ AJUSTANDO
+  2.0 m/s → real=1.885 err=+0.115 std=0.033 ok=12% conv=4.0s → ~ AJUSTANDO
+
+Gains 5: kp=0.05 ki=0.15 kd=0.01 max_int=0.1
+  0.3 m/s → real=0.992 err=-0.692 std=0.414 ok=7% conv=4.98s → ✗ ERROR ALTO
+  0.5 m/s → real=1.325 err=-0.825 std=0.252 ok=0% conv=no convergiós → ✗ ERROR ALTO
+  1.0 m/s → real=1.385 err=-0.385 std=0.326 ok=15% conv=5.35s → ✗ ERROR ALTO
+  1.5 m/s → real=1.633 err=-0.134 std=0.121 ok=30% conv=4.02s → ~ AJUSTANDO
+  2.0 m/s → real=1.966 err=+0.034 std=0.036 ok=88% conv=4.01s → ✓ CONVERGIDO
+
+
+MEJOR GAIN POR VELOCIDAD
+----------------------------------------------------------------------
+  0.3 m/s → kp=0.05 ki=0.15 kd=0.01 (err=-0.692 ok=7%)
+  0.5 m/s → kp=0.04 ki=0.08 kd=0.02 (err=-0.796 ok=0%)
+  1.0 m/s → kp=0.04 ki=0.08 kd=0.01 (err=-0.327 ok=28%)
+  1.5 m/s → kp=0.04 ki=0.08 kd=0.01 (err=-0.063 ok=10%)
+  2.0 m/s → kp=0.05 ki=0.15 kd=0.01 (err=+0.034 ok=88%)

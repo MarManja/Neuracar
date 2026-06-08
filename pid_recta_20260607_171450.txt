@@ -1,0 +1,101 @@
+NEURACAR PID TUNER RECTA
+Fecha: 2026-06-07 17:32:15
+Setpoints: [0.82, 1.1, 1.38]
+==========================================================
+
+RESULTADO FINAL
+----------------------------------------------------------
+  kp = 0.02
+  ki = 0.25
+  kd = 0.02
+
+Copia a _GAIN_SCHEDULE en velocity_pid_node.py:
+_GAIN_SCHEDULE = [
+    # v_m/s   kp     ki     kd     max_int
+    (0.82,  0.020,  0.250,  0.020,   0.200),
+    (1.10,  0.020,  0.250,  0.020,   0.200),
+    (1.38,  0.020,  0.250,  0.020,   0.200),
+]
+
+DETALLE POR FASE
+----------------------------------------------------------
+
+F1_kp0.02: kp=0.02 ki=0.0 kd=0.0
+  sp=0.82 → real=0.931 err=0.111 ok=36%
+  sp=1.10 → real=1.307 err=0.207 ok=19%
+  sp=1.38 → real=1.719 err=0.339 ok=5%
+
+F1_kp0.04: kp=0.04 ki=0.0 kd=0.0
+  sp=0.82 → real=0.978 err=0.158 ok=23%
+  sp=1.10 → real=1.364 err=0.264 ok=12%
+  sp=1.38 → real=1.704 err=0.325 ok=4%
+
+F1_kp0.06: kp=0.06 ki=0.0 kd=0.0
+  sp=0.82 → real=0.987 err=0.167 ok=26%
+  sp=1.10 → real=1.421 err=0.322 ok=0%
+  sp=1.38 → real=1.738 err=0.358 ok=0%
+
+F1_kp0.08: kp=0.08 ki=0.0 kd=0.0
+  sp=0.82 → real=1.004 err=0.184 ok=22%
+  sp=1.10 → real=1.371 err=0.271 ok=0%
+  sp=1.38 → real=1.741 err=0.361 ok=0%
+
+F1_kp0.1: kp=0.1 ki=0.0 kd=0.0
+  sp=0.82 → real=0.992 err=0.172 ok=16%
+  sp=1.10 → real=1.345 err=0.245 ok=9%
+  sp=1.38 → real=1.745 err=0.365 ok=0%
+
+F1_kp0.15: kp=0.15 ki=0.0 kd=0.0
+  sp=0.82 → real=0.961 err=0.141 ok=27%
+  sp=1.10 → real=1.321 err=0.221 ok=11%
+  sp=1.38 → real=1.735 err=0.355 ok=0%
+
+F2_ki0.05: kp=0.02 ki=0.05 kd=0.0
+  sp=0.82 → real=0.967 err=0.147 ok=23%
+  sp=1.10 → real=1.338 err=0.238 ok=8%
+  sp=1.38 → real=1.742 err=0.362 ok=0%
+
+F2_ki0.1: kp=0.02 ki=0.1 kd=0.0
+  sp=0.82 → real=0.974 err=0.154 ok=20%
+  sp=1.10 → real=1.324 err=0.224 ok=14%
+  sp=1.38 → real=1.770 err=0.390 ok=0%
+
+F2_ki0.15: kp=0.02 ki=0.15 kd=0.0
+  sp=0.82 → real=0.974 err=0.154 ok=22%
+  sp=1.10 → real=1.335 err=0.235 ok=8%
+  sp=1.38 → real=1.750 err=0.370 ok=0%
+
+F2_ki0.2: kp=0.02 ki=0.2 kd=0.0
+  sp=0.82 → real=0.959 err=0.139 ok=27%
+  sp=1.10 → real=1.351 err=0.252 ok=3%
+  sp=1.38 → real=1.721 err=0.341 ok=3%
+
+F2_ki0.25: kp=0.02 ki=0.25 kd=0.0
+  sp=0.82 → real=0.948 err=0.128 ok=32%
+  sp=1.10 → real=1.308 err=0.208 ok=16%
+  sp=1.38 → real=1.769 err=0.389 ok=0%
+
+F2_ki0.3: kp=0.02 ki=0.3 kd=0.0
+  sp=0.82 → real=0.969 err=0.149 ok=22%
+  sp=1.10 → real=1.313 err=0.213 ok=15%
+  sp=1.38 → real=1.764 err=0.384 ok=0%
+
+F3_kd0.0: kp=0.02 ki=0.25 kd=0.0
+  sp=0.82 → real=0.955 err=0.135 ok=27%
+  sp=1.10 → real=1.340 err=0.240 ok=10%
+  sp=1.38 → real=1.752 err=0.372 ok=0%
+
+F3_kd0.01: kp=0.02 ki=0.25 kd=0.01
+  sp=0.82 → real=0.937 err=0.117 ok=33%
+  sp=1.10 → real=1.317 err=0.217 ok=12%
+  sp=1.38 → real=1.686 err=0.306 ok=0%
+
+F3_kd0.02: kp=0.02 ki=0.25 kd=0.02
+  sp=0.82 → real=0.916 err=0.096 ok=41%
+  sp=1.10 → real=1.333 err=0.233 ok=8%
+  sp=1.38 → real=1.724 err=0.344 ok=3%
+
+F3_kd0.05: kp=0.02 ki=0.25 kd=0.05
+  sp=0.82 → real=0.938 err=0.117 ok=36%
+  sp=1.10 → real=1.389 err=0.288 ok=0%
+  sp=1.38 → real=1.742 err=0.362 ok=0%

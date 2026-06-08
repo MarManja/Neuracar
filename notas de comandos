@@ -1,0 +1,2 @@
+ros2 topic pub /neuracar/user_command geometry_msgs/msg/Vector3Stamped "{vector: {x: 0.0, y: 0.0}}"
+
