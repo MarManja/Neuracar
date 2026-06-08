@@ -1,0 +1,12 @@
+Pure Pursuit — Reporte
+========================================
+Trayectoria : vuelta_05_5cm
+Duración    : 37.1 s
+Vueltas     : 0
+Paradas obs.: 6
+Terminó por obstáculo: no
+
+RMS CTE     : 0.0861 m  → BUENO
+CTE máximo  : 0.1940 m
+% < 5 cm    : 60.4%
+% < 10 cm   : 79.9%

@@ -36,7 +36,7 @@ class ObstacleDetectorNode(Node):
         super().__init__('obstacle_detector_node')
 
         # ── Parámetros ─────────────────────────────────────────────
-        self.declare_parameter('distance_threshold',    0.35)
+        self.declare_parameter('distance_threshold',    0.80) # 0.35
         self.declare_parameter('angle_range_low_deg',   22.5)
         self.declare_parameter('angle_range_high_deg',  30.0)
         self.declare_parameter('velocity_threshold',    1.0)
