@@ -10,7 +10,6 @@ from launch_ros.parameter_descriptions import ParameterValue
 # ros2 launch neuracar_bringup sensors.launch.py micro:=false
 # ros2 launch neuracar_bringup sensors.launch.py camera:=false
 # ros2 launch neuracar_bringup sensors.launch.py lidar:=false
-# ros2 launch neuracar_bringup sensors.launch.py auto_shutdown:=false
 # ros2 launch neuracar_bringup sensors.launch.py port_sensores:=/dev/ttyUSB0
 # ros2 launch neuracar_bringup sensors.launch.py port_actuadores:=/dev/ttyUSB0
 
@@ -34,12 +33,6 @@ def generate_launch_description():
         'micro',
         default_value='true',
         description='Lanzar el puente serial con la micro'
-    )
-
-    arg_auto_shutdown = DeclareLaunchArgument(
-        'auto_shutdown',
-        default_value='true',
-        description='Apagar Jetson automaticamente si bateria critica. False en desarrollo.'
     )
 
     arg_port_sensores = DeclareLaunchArgument(
@@ -144,7 +137,6 @@ def generate_launch_description():
         arg_camera,
         arg_lidar,
         arg_micro,
-        arg_auto_shutdown,
         arg_port_sensores,
         arg_port_actuadores,
         camera_node,

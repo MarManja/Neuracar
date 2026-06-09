@@ -102,7 +102,7 @@ def launch_setup(context, *args, **kwargs):
     #            /neuracar/wheel_speed   (feedback encoder, desde sensors)
     # Salida:    /neuracar/user_command  →  esp32_actuadores_node
     nodes.append(Node(
-        package='neuracar_control',
+        package='neuracar_perception',
         executable='velocity_pid_node',
         name='velocity_pid_node',
         output='screen',
