@@ -1,29 +1,50 @@
-#!/usr/bin/env python3
 """
-velocity_pid_node_v1_6_steering_aware.py — Neuracar
-====================================================
-Versión con feedforward dependiente del steering.
+velocity_pid_node.py — NeuraCar
+══════════════════════════════════════════════════════════════════
+Tecnológico de Monterrey, Campus Puebla — MR3002B, 2026
 
-Por qué:
-  El carro no requiere el mismo throttle en recta que en curva con steering alto.
-  Esta versión mezcla dos LUTs:
-    - LUT_STRAIGHT: calibrada en línea recta.
-    - LUT_CURVE:    calibrada en curva con steering≈1.0.
+Steering-aware PID velocity controller with dual look-up-table (LUT)
+feedforward. Compensates the Traxxas XL-5 ESC nonlinearities:
+  - Dead zone: throttle < 0.58 produces no motion
+  - Abrupt jump: throttle 0.62→0.63 = 0.437→0.734 m/s (measured
+    2026-06-07, straight run, NiMH 8.4 V)
 
-También corrige la lógica de zona inestable: para setpoints dentro del salto del ESC,
-manda directamente el throttle post-salto en lugar de interpolar en una zona no usable.
+Two LUTs calibrated experimentally:
+  LUT_STRAIGHT (6 pts, steering=0.0, 2026-06-07)
+  LUT_CURVE    (9 pts, |steering|≈1.0)
+Blended as: FF = (1-w)·FF_straight + w·FF_curve
+  w = clamp((|steering| - 0.25) / 0.65,  0, 1)
 
-Entradas:
-  /neuracar/cmd_velocity   std_msgs/Float32   [m/s]
-  /neuracar/cmd_steering   std_msgs/Float32   [-1, 1]
-  /neuracar/wheel_speed    std_msgs/Float32   [m/s]
+PID gains scheduled by velocity setpoint. Derivative computed on
+measured velocity (derivative-on-measurement) to suppress setpoint
+step spikes. Throttle slew-rate limiter prevents abrupt commands.
 
-Salida:
-  /neuracar/user_command   geometry_msgs/Vector3Stamped
-    vector.x = throttle [-1, 1]
-    vector.y = steering [-1, 1]
+Subscriptions:
+  /neuracar/cmd_velocity  std_msgs/Float32   velocity setpoint [m/s]
+  /neuracar/cmd_steering  std_msgs/Float32   steering command [-1, 1]
+  /neuracar/wheel_speed   std_msgs/Float32   measured velocity [m/s]
+
+Publications:
+  /neuracar/user_command  geometry_msgs/Vector3Stamped
+                          vector.x = throttle [-1, 1]
+                          vector.y = steering [-1, 1]
+
+Parameters:
+  gain_scheduling         (bool,  true):  Use velocity-scheduled gains
+  kp, ki, kd              (float):        Fixed gains (if scheduling=false)
+  max_integral            (float, 0.40):  Integrator clamp
+  max_throttle            (float, 1.00):  Throttle output limit
+  max_rate                (float, 2.00):  Throttle slew rate [throttle/s]
+  v_deadband              (float, 0.05):  Velocity deadband [m/s]
+  freq_hz                 (float, 50.0):  Control loop frequency [Hz]
+  steer_lut_start         (float, 0.25):  |steering| where LUT blend starts
+  steer_lut_full          (float, 0.90):  |steering| where blend saturates
+  straight_stable_min_v   (float, 0.756): Post-jump minimum speed, straight
+  straight_stable_min_throttle (float, 0.661): Post-jump throttle, straight
+  curve_stable_min_v      (float, 0.590): Post-jump minimum speed, curve
+  curve_stable_min_throttle    (float, 0.650): Post-jump throttle, curve
+══════════════════════════════════════════════════════════════════
 """
-
 import time
 import threading
 from typing import List, Tuple
@@ -35,7 +56,7 @@ from rclpy.qos import (QoSProfile, QoSReliabilityPolicy,
 from geometry_msgs.msg import Vector3Stamped
 from std_msgs.msg import Float32
 
-LUT = List[Tuple[float, float]]  # (velocidad_m_s, throttle)
+LUT = List[Tuple[float, float]]
 
 
 # ── LUT calibrada en línea recta (2026-06-07) ────────────────────────
@@ -60,11 +81,11 @@ _LUT_STRAIGHT: LUT = [
 ]
 
 # ── LUT calibrada en curva / steering alto ───────────────────────────
-# Basada en tus mediciones con steering≈1.0.
+# Basada en mediciones con steering≈1.0.
 # Se volvió monotónica para poder interpolar sin saltos raros:
-#   0.22@0.58 y 0.22@0.60  -> se conserva 0.22@0.60 por confiabilidad
-#   0.59@0.65 y 0.58@0.70  -> se usa 0.59@0.65 como primer post-salto
-#   1.29@0.80 y 1.28@0.85  -> se promedia a 1.285@0.825
+#   0.22-0.58 y 0.22-0.60  -> se conserva 0.22-0.60 por confiabilidad
+#   0.59-0.65 y 0.58-0.70  -> se usa 0.59-0.65 como primer post-salto
+#   1.29-0.80 y 1.28-0.85  -> se promedia a 1.285-0.825
 _LUT_CURVE: LUT = [
     (0.00, 0.000),
     (0.18, 0.550),
@@ -83,7 +104,6 @@ def clamp(x: float, lo: float, hi: float) -> float:
 
 
 def interpolate_lut(v_abs: float, lut: LUT) -> float:
-    """Interpola throttle para una velocidad positiva usando una LUT monotónica."""
     if v_abs <= lut[0][0]:
         return lut[0][1]
     if v_abs >= lut[-1][0]:
@@ -175,13 +195,12 @@ class VelocityPIDNode(Node):
         self.declare_parameter('v_deadband',   0.05)
         self.declare_parameter('freq_hz',      50.0)
 
-        # Parámetros nuevos para mezcla de LUTs
         self.declare_parameter('steer_lut_start', 0.25)
         self.declare_parameter('steer_lut_full',  0.90)
         self.declare_parameter('straight_stable_min_v',        0.756)  # calibrado 2026-06-07
         self.declare_parameter('straight_stable_min_throttle', 0.661)  # calibrado 2026-06-07
-        self.declare_parameter('curve_stable_min_v',           0.590)  # calibrado pista5
-        self.declare_parameter('curve_stable_min_throttle',    0.650)  # calibrado pista5
+        self.declare_parameter('curve_stable_min_v',           0.590)  # calibrado pista
+        self.declare_parameter('curve_stable_min_throttle',    0.650)  # calibrado pista
 
         self._use_gs = bool(self.get_parameter('gain_scheduling').value)
         self._kp_fixed = float(self.get_parameter('kp').value)
@@ -305,7 +324,6 @@ class VelocityPIDNode(Node):
         self._integral = clamp(self._integral, -max_int, max_int)
         i = ki * self._integral
 
-        # Derivativo sobre medida para evitar spike al cambiar setpoint.
         d = -kd * (v_filt - v_filt_p) / dt
 
         raw = ff + p + i + d
@@ -315,7 +333,6 @@ class VelocityPIDNode(Node):
         else:
             throttle_sat = clamp(raw, -self._max_thr, 0.0)
 
-        # Kickstart: si estaba casi parado, permite saltar directo al FF.
         ff_abs = abs(ff)
         if ff_abs > 0 and abs(self._throttle_prev) < ff_abs * 0.5:
             throttle_out = throttle_sat

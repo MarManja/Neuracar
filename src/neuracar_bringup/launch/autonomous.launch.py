@@ -1,44 +1,41 @@
 """
-autonomous_launch.py — Neuracar
-=================================
-Launch único para modo autónomo. Levanta toda la pila necesaria:
-sensors → perception (odometry + obstacle + velocity_pid) → controlador.
+autonomous.launch.py — NeuraCar
+══════════════════════════════════════════════════════════════════
+Tecnológico de Monterrey, Campus Puebla — MR3002B, 2026
 
-Uso:
-  ros2 launch neuracar_bringup autonomous.launch.py controller:=stanley  run_name:=vuelta_05_5cm
-  ros2 launch neuracar_bringup autonomous.launch.py controller:=pure_pursuit
-  ros2 launch neuracar_bringup autonomous.launch.py controller:=stanley  loop:=true  max_loops:=3
-  ros2 launch neuracar_bringup autonomous.launch.py controller:=lane_follower  lane_detection:=true
-
-El dashboard se lanza SIEMPRE en una terminal separada y se cierra manualmente:
+Full autonomous stack: includes sensors.launch.py +
+perception.launch.py + selected path-tracking controller.
+The dashboard must be launched separately and has an independent
+lifecycle:
   ros2 run neuracar_control dashboard_node
-El dashboard tiene ciclo de vida independiente — sigue corriendo después del
-Ctrl+C del controlador para que puedas ver la trayectoria y el análisis final.
 
-Opciones generales:
-  controller:=stanley|pure_pursuit|lane_follower   controlador autónomo (default: stanley)
-  run_name:=vuelta_05_5cm                          trayectoria CSV a seguir
-  obstacle_stop:=true|false                        parada por LiDAR (default: true)
-  stop_on_obstacle:=false                          true=termina prueba, false=pausa y reanuda
-  distance_threshold:=0.50                         umbral LiDAR [m]
-  lane_detection:=false                            activar lane_detector (solo con lane_follower)
-  debug_lidar:=false                               logs de debug del obstacle_detector
+Nodes launched:
+  (via sensors.launch.py)     All hardware drivers
+  (via perception.launch.py)  Odometry, obstacle detector, PID
+  neuracar_control/stanley_controller_node     if controller:=stanley
+  neuracar_control/pure_pursuit_node           if controller:=pure_pursuit
+  neuracar_control/stanley_lane_follower_node  if controller:=lane_follower
 
-Opciones del controlador (stanley y pure_pursuit):
-  speed:=0.50              velocidad en recta [m/s]
-  speed_curve:=0.55        velocidad en curva [m/s]
-  loop:=false              repetir trayectoria al llegar a la meta
-  max_loops:=1             número de vueltas (0 = infinito)
-
-Opciones solo Stanley:
-  k:=0.80                  ganancia Stanley (corrección CTE)
-  k_soft:=0.50             suavizado a baja velocidad
-  heading_lookahead:=0.30  metros adelante para calcular heading del path [m]
-
-Opciones solo Pure Pursuit:
-  lookahead:=0.40          distancia lookahead [m]
+Parameters:
+  controller         (string, stanley):        stanley|pure_pursuit|lane_follower
+  run_name           (string, vuelta_05_5cm):  CSV trajectory (no extension)
+  obstacle_stop      (bool,   true):           Enable obstacle detector
+  stop_on_obstacle   (bool,   false):          true=end run, false=pause/resume
+  distance_threshold (float,  0.50):           LiDAR stop distance [m]
+  lane_detection     (bool,   false):          Enable lane detector
+  debug_lidar        (bool,   false):          Obstacle detector debug logs
+  speed              (float,  0.50):           Straight speed [m/s]
+  speed_curve        (float,  0.55):           Curve speed [m/s]
+  loop               (bool,   false):          Repeat trajectory at goal
+  max_loops          (int,    1):              Max laps (0 = infinite)
+  — Stanley only —
+  k                  (float,  0.80):           CTE gain
+  k_soft             (float,  0.50):           Low-speed softening
+  heading_lookahead  (float,  0.30):           Heading preview distance [m]
+  — Pure Pursuit only —
+  lookahead          (float,  0.40):           Lookahead distance Lf [m]
+══════════════════════════════════════════════════════════════════
 """
-
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, OpaqueFunction, IncludeLaunchDescription
 from launch.launch_description_sources import PythonLaunchDescriptionSource
@@ -70,9 +67,6 @@ def launch_setup(context, *args, **kwargs):
     nodes = []
 
     # ── sensors.launch ───────────────────────────────────────────────────
-    # Levanta todo el hardware: encoder, IMU, LiDAR, cámara (si la necesitas).
-    # Si el controlador es lane_follower activa la cámara, si no la deja apagada
-    # para no gastar recursos.
     camera_on = 'true' if controller == 'lane_follower' else 'false'
     nodes.append(IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
@@ -85,8 +79,6 @@ def launch_setup(context, *args, **kwargs):
     ))
 
     # ── perception.launch ────────────────────────────────────────────────
-    # Levanta odometry + obstacle_detector + velocity_pid.
-    # Si es lane_follower activa también el lane_detector.
     nodes.append(IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
             os.path.join(bringup_dir, 'launch', 'perception.launch.py')),
@@ -98,11 +90,7 @@ def launch_setup(context, *args, **kwargs):
         }.items(),
     ))
 
-    # ── Controlador autónomo ─────────────────────────────────────────────
-    # Stanley, Pure Pursuit o Lane Follower.
-    # Todos publican en /neuracar/cmd_velocity y /neuracar/cmd_steering.
-    # El velocity_pid_node (en perception) cierra el lazo hacia el ESP32.
-
+    # ── autonomous controller ─────────────────────────────────────────────
     if controller == 'stanley':
         nodes.append(Node(
             package='neuracar_control',
@@ -116,11 +104,11 @@ def launch_setup(context, *args, **kwargs):
                 'loop':              loop,
                 'max_loops':         max_loops,
                 'stop_on_obstacle':  stop_on_obstacle,
-                # Parámetros Stanley
+
                 'k':                 k,
                 'k_soft':            k_soft,
                 'heading_lookahead': heading_lookahead,
-                # Defaults físicos calibrados
+
                 'wheelbase':         0.256,
                 'steering_sign':    -1.0,
                 'steering_cmd_gain': 1.0,
@@ -147,9 +135,9 @@ def launch_setup(context, *args, **kwargs):
                 'loop':             loop,
                 'max_loops':        max_loops,
                 'stop_on_obstacle': stop_on_obstacle,
-                # Parámetros Pure Pursuit
+
                 'lookahead':        lookahead,
-                # Defaults físicos calibrados
+
                 'wheelbase':        0.256,
                 'steering_sign':   -1.0,
                 'steering_cmd_gain': 1.0,
@@ -187,7 +175,6 @@ def launch_setup(context, *args, **kwargs):
 
 def generate_launch_description():
     return LaunchDescription([
-        # ── Controlador ────────────────────────────────────────────────
         DeclareLaunchArgument(
             'controller', default_value='stanley',
             description='Controlador autónomo: stanley | pure_pursuit | lane_follower'),
@@ -195,7 +182,6 @@ def generate_launch_description():
             'run_name', default_value='vuelta_05_5cm',
             description='Nombre del CSV de trayectoria (sin extensión)'),
 
-        # ── LiDAR / seguridad ──────────────────────────────────────────
         DeclareLaunchArgument(
             'obstacle_stop', default_value='true',
             description='Activar obstacle_detector (true/false)'),
@@ -209,12 +195,10 @@ def generate_launch_description():
             'debug_lidar', default_value='false',
             description='Logs de debug del obstacle_detector'),
 
-        # ── Lane follower ──────────────────────────────────────────────
         DeclareLaunchArgument(
             'lane_detection', default_value='false',
             description='Activar lane_detector — se activa automáticamente con controller:=lane_follower'),
 
-        # ── Velocidad ──────────────────────────────────────────────────
         DeclareLaunchArgument(
             'speed', default_value='0.50',
             description='Velocidad en recta [m/s]'),
@@ -222,7 +206,6 @@ def generate_launch_description():
             'speed_curve', default_value='0.55',
             description='Velocidad en curva [m/s]'),
 
-        # ── Vueltas ────────────────────────────────────────────────────
         DeclareLaunchArgument(
             'loop', default_value='false',
             description='Repetir trayectoria al llegar a la meta'),
@@ -230,7 +213,6 @@ def generate_launch_description():
             'max_loops', default_value='1',
             description='Número de vueltas (0 = infinito)'),
 
-        # ── Stanley ────────────────────────────────────────────────────
         DeclareLaunchArgument(
             'k', default_value='0.80',
             description='Ganancia Stanley — corrección CTE'),
@@ -241,7 +223,6 @@ def generate_launch_description():
             'heading_lookahead', default_value='0.30',
             description='Metros adelante para calcular heading del path [m]'),
 
-        # ── Pure Pursuit ───────────────────────────────────────────────
         DeclareLaunchArgument(
             'lookahead', default_value='0.40',
             description='Distancia lookahead Pure Pursuit [m]'),

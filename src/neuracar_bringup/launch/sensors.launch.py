@@ -1,19 +1,33 @@
+"""
+sensors.launch.py — NeuraCar
+══════════════════════════════════════════════════════════════════
+Tecnológico de Monterrey, Campus Puebla — MR3002B, 2026
+
+Launches all hardware drivers: sensing ESP32 (encoder + IMU),
+actuation ESP32 (ESC + servo), RPLiDAR A3M1, and Intel RealSense
+D415. Each driver can be enabled or disabled independently.
+
+Nodes launched:
+  neuracar_sensors/esp32_sensores_node   Encoder + IMU serial bridge
+  neuracar_sensors/esp32_actuadores_node ESC + servo serial bridge
+  rplidar_ros/rplidar_node               RPLiDAR A3M1 @ /dev/lidar
+  realsense2_camera/realsense2_camera_node  RGB 640x480 @ 15 fps
+
+Parameters:
+  camera        (bool,   true):          Launch RealSense D415
+  lidar         (bool,   true):          Launch RPLiDAR A3M1
+  micro         (bool,   true):          Launch ESP32 serial bridges
+  port_sensores (string, /dev/esp32s):   Sensing ESP32 — must be
+                                         connected to USB Type-C port
+  port_actuadores (string, /dev/esp32a): Actuation ESP32 — must be
+                                         connected to upper-left USB-A port
+══════════════════════════════════════════════════════════════════
+"""
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
 from launch.conditions import IfCondition
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
-#from launch_ros.parameter_descriptions import ParameterValue
-
-
-# Opciones:
-# ros2 launch neuracar_bringup sensors.launch.py micro:=false
-# ros2 launch neuracar_bringup sensors.launch.py camera:=false
-# ros2 launch neuracar_bringup sensors.launch.py lidar:=false
-# ros2 launch neuracar_bringup sensors.launch.py port_sensores:=/dev/ttyUSB0
-# ros2 launch neuracar_bringup sensors.launch.py port_actuadores:=/dev/ttyUSB0
-
-
 
 def generate_launch_description():
 
@@ -65,18 +79,11 @@ def generate_launch_description():
             'enable_infra1': False,
             'enable_infra2': False,
 
-            # Baja carga para Jetson
             'rgb_camera.color_profile': '640x480x15',
             'depth_module.depth_profile': '640x480x15',
-
-            # Desactivar cosas pesadas por ahora
             'pointcloud.enable': False,
             'align_depth.enable': False,
-
-            # Puede ayudar cuando la cámara queda en estado raro
             'initial_reset': True,
-
-            # Evita esperar indefinidamente si no detecta cámara
             'wait_for_device_timeout': 5.0,
         }]
     )
@@ -98,7 +105,6 @@ def generate_launch_description():
         }]
     )
 
-    # Nodo exclusivo de sensores — solo lee serial, sin actuadores
     sensores_node = Node(
         package='neuracar_sensors',
         executable='esp32_sensores_node',
@@ -115,7 +121,6 @@ def generate_launch_description():
         }]
     )
  
-    # Nodo exclusivo de actuadores — solo escribe serial, latencia mínima
     actuadores_node = Node(
         package='neuracar_sensors',
         executable='esp32_actuadores_node',

@@ -1,23 +1,33 @@
 #!/usr/bin/env python3
 """
-Obstacle Detector Node — Neuracar
-===================================
-Detecta obstáculos frontales Y traseros con LiDAR.
-Ventana angular dinámica ajustada según velocidad del vehículo.
+obstacle_detector_node.py — NeuraCar
+══════════════════════════════════════════════════════════════════
+Tecnológico de Monterrey, Campus Puebla — MR3002B, 2026
 
-Publica:
-  /neuracar/lidar/obstacle_alert       (Bool)  — obstáculo al frente
-  /neuracar/lidar/obstacle_alert_rear  (Bool)  — obstáculo atrás
+Detects front and rear obstacles using the RPLiDAR A3M1.
+Dynamic angular window adjusts based on vehicle speed.
 
-Controladores:
-  throttle > 0 bloqueado si obstacle_alert       (frente)
-  throttle < 0 bloqueado si obstacle_alert_rear  (atrás)
+LiDAR is mounted with cable facing rear:
+  Front window centered at π rad
+  Rear window  centered at 0 rad
 
-Parámetros clave:
-  lidar_front_offset_rad  float  math.pi  — Neuracar cable atrás: frente = π rad
-  lidar_rear_offset_rad   float  0.0      — trasero = 0 rad (cable)
-  Si cambias el montaje del LiDAR solo ajusta lidar_front_offset_rad;
-  el trasero es siempre front + π (mod 2π).
+Subscriptions:
+  /scan                  sensor_msgs/LaserScan
+  /neuracar/velocity     geometry_msgs/TwistStamped
+
+Publications:
+  /neuracar/lidar/obstacle_alert       std_msgs/Bool  front obstacle
+  /neuracar/lidar/obstacle_alert_rear  std_msgs/Bool  rear obstacle
+
+Parameters:
+  distance_threshold     (float, 0.80):  Stop distance [m]
+  angle_range_low_deg    (float, 22.5):  Half-cone at low speed [deg]
+  angle_range_high_deg   (float, 30.0):  Half-cone at high speed [deg]
+  velocity_threshold     (float, 1.0):   Speed to switch cone width [m/s]
+  lidar_front_offset_rad (float, pi):    Front window center [rad]
+  lidar_rear_offset_rad  (float, 0.0):   Rear window center [rad]
+  debug_mode             (bool,  false): Enable verbose logs
+══════════════════════════════════════════════════════════════════
 """
 
 import math
@@ -35,14 +45,10 @@ class ObstacleDetectorNode(Node):
     def __init__(self):
         super().__init__('obstacle_detector_node')
 
-        # ── Parámetros ─────────────────────────────────────────────
-        self.declare_parameter('distance_threshold',    0.80) # 0.35
-        self.declare_parameter('angle_range_low_deg',   22.5)
-        self.declare_parameter('angle_range_high_deg',  30.0)
-        self.declare_parameter('velocity_threshold',    1.0)
-        # Neuracar (cable atrás): frente del vehículo = π en frame raw del LiDAR
-        # QCar (cable derecha):   frente = -π/2 (-90°)
-        # Ajusta solo este valor si cambias el montaje físico.
+        self.declare_parameter('distance_threshold',     0.80)
+        self.declare_parameter('angle_range_low_deg',    22.5)
+        self.declare_parameter('angle_range_high_deg',   30.0)
+        self.declare_parameter('velocity_threshold',     1.0)
         self.declare_parameter('lidar_front_offset_rad', math.pi)
         self.declare_parameter('lidar_rear_offset_rad',  0.0)
         self.declare_parameter('debug_mode', False)
@@ -56,9 +62,8 @@ class ObstacleDetectorNode(Node):
         self._debug     = self.get_parameter('debug_mode').value
 
         self._angle_range = self._ang_low
-        self._velocity    = 0.0
+        self._velocity    = 0.0  
 
-        # ── QoS para LiDAR ─────────────────────────────────────────
         qos_lidar = QoSProfile(
             reliability=ReliabilityPolicy.BEST_EFFORT,
             history=HistoryPolicy.KEEP_LAST,
@@ -66,13 +71,11 @@ class ObstacleDetectorNode(Node):
             durability=DurabilityPolicy.VOLATILE,
         )
 
-        # ── Publishers ─────────────────────────────────────────────
         self._pub_front = self.create_publisher(
             Bool, '/neuracar/lidar/obstacle_alert', 10)
         self._pub_rear  = self.create_publisher(
             Bool, '/neuracar/lidar/obstacle_alert_rear', 10)
 
-        # ── Subscribers ────────────────────────────────────────────
         self.create_subscription(
             LaserScan, '/scan', self._lidar_callback, qos_lidar)
         self.create_subscription(
@@ -83,56 +86,43 @@ class ObstacleDetectorNode(Node):
             f'trasero={math.degrees(self._rear):.0f}°  '
             f'umbral={self._dist_thr}m')
 
-    # ── Velocity ────────────────────────────────────────────────────
     def _velocity_callback(self, msg: TwistStamped):
-        self._velocity    = abs(msg.twist.linear.x)
+        # Keep sign — needed to know direction of travel
+        self._velocity    = msg.twist.linear.x
         self._angle_range = (
-            self._ang_high if self._velocity > self._vel_thr else self._ang_low)
+            self._ang_high if abs(self._velocity) > self._vel_thr
+            else self._ang_low)
 
-    # ── Detección en una ventana angular ────────────────────────────
     def _check_window(self, ranges, msg, center_offset_rad):
-        """
-        Retorna (detected: bool, min_dist: float) para una ventana
-        centrada en center_offset_rad con ancho ±angle_range.
-        Usa ángulos relativos con wrap-around correcto — funciona
-        aunque el offset quede fuera de [angle_min, angle_max].
-        """
-        angles = msg.angle_min + np.arange(len(ranges)) * msg.angle_increment
-
-        # Ángulo de cada rayo relativo al centro de la ventana, wrap a (−π, π]
+        angles   = msg.angle_min + np.arange(len(ranges)) * msg.angle_increment
         rel      = (angles - center_offset_rad + np.pi) % (2 * np.pi) - np.pi
         half_rad = np.radians(self._angle_range)
         window   = np.abs(rel) <= half_rad
-
-        valid     = (np.isfinite(ranges) &
-                     (ranges > msg.range_min) &
-                     (ranges < msg.range_max))
+        valid    = (np.isfinite(ranges) &
+                    (ranges > msg.range_min) &
+                    (ranges < msg.range_max))
         in_window = window & valid
         close     = ranges < self._dist_thr
-
-        detected = bool(np.any(in_window & close))
-        min_dist = (float(np.min(ranges[in_window]))
-                    if np.any(in_window) else float('inf'))
+        detected  = bool(np.any(in_window & close))
+        min_dist  = (float(np.min(ranges[in_window]))
+                     if np.any(in_window) else float('inf'))
         return detected, min_dist
 
-    # ── LiDAR callback ──────────────────────────────────────────────
     def _lidar_callback(self, msg: LaserScan):
         ranges = np.array(msg.ranges)
 
-        # Debug: obstáculo más cercano en todo el escaneo
         if self._debug:
             valid = (ranges > msg.range_min) & np.isfinite(ranges)
             if np.any(valid):
                 idx = np.argmin(np.where(valid, ranges, np.inf))
                 ang = math.degrees(msg.angle_min + idx * msg.angle_increment)
                 self.get_logger().info(
-                    f'Más cercano: {ranges[idx]:.2f}m a {ang:.1f}°')
+                    f'Nearest: {ranges[idx]:.2f}m @ {ang:.1f}°  '
+                    f'vel={self._velocity:+.2f}m/s')
 
-        # Detección frontal y trasera
         front_detected, front_dist = self._check_window(ranges, msg, self._front)
         rear_detected,  rear_dist  = self._check_window(ranges, msg, self._rear)
 
-        # Publicar alertas
         front_msg = Bool(); front_msg.data = front_detected
         rear_msg  = Bool(); rear_msg.data  = rear_detected
         self._pub_front.publish(front_msg)
@@ -140,12 +130,13 @@ class ObstacleDetectorNode(Node):
 
         if front_detected:
             self.get_logger().warn(
-                f'FRENTE: obstáculo a {front_dist:.2f}m '
-                f'(vel={self._velocity:.2f}m/s, cono=±{self._angle_range:.0f}°)',
+                f'FRONT obstacle at {front_dist:.2f}m '
+                f'(vel={self._velocity:+.2f}m/s, cone=±{self._angle_range:.0f}°)',
                 throttle_duration_sec=0.5)
         if rear_detected:
             self.get_logger().warn(
-                f'TRASERO: obstáculo a {rear_dist:.2f}m',
+                f'REAR obstacle at {rear_dist:.2f}m '
+                f'(vel={self._velocity:+.2f}m/s)',
                 throttle_duration_sec=0.5)
 
 

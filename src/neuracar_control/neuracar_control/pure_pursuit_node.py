@@ -1,33 +1,44 @@
-#!/usr/bin/env python3
 """
-pure_pursuit_node.py — Neuracar v2.5 baseline estático + referencia periódica
-======================================================
+pure_pursuit_node.py — NeuraCar
+══════════════════════════════════════════════════════════════════
+Tecnológico de Monterrey, Campus Puebla — MR3002B, 2026
 
-Versión basada en la prueba que funcionó:
-  - Trayectoria default: vuelta_05_5cm
-  - Lookahead fijo: 0.40 m
-  - Sin lookahead dinámico: no usa k_gain ni lookahead_max
-  - Búsqueda local de waypoint + índice monótono
-  - Steering invertido por default: steering_sign = -1.0
-  - Velocidad por modo simple:
-      recta: 0.50 m/s
-      curva: 0.55 m/s
-    Se conserva porque el carro necesita más velocidad en curva para romper fricción.
-  - LiDAR default: stop_on_obstacle = True, termina la prueba para no contaminar análisis.
-    Para pruebas con obstáculos que se quitan y reanuda, usar stop_on_obstacle:=false.
+Pure Pursuit geometric path-tracking controller. Reads a pre-recorded
+CSV of (x, y, theta) waypoints and computes steering commands at 20 Hz
+using a fixed lookahead distance. Saves post-run analysis (CSV, TXT,
+PNG) automatically on Ctrl+C.
 
-Entradas:
+  delta = atan2(2 * L * sin(alpha), Lf)
+
+Subscriptions:
   /neuracar/odometry              nav_msgs/Odometry
   /neuracar/velocity              geometry_msgs/TwistStamped
   /neuracar/lidar/obstacle_alert  std_msgs/Bool
 
-Salidas:
-  /neuracar/cmd_velocity          std_msgs/Float32 [m/s]
-  /neuracar/cmd_steering          std_msgs/Float32 [-1, 1]
-  /neuracar/path_reference        nav_msgs/Path      — publicado periódicamente para dashboard
-  /neuracar/path_real             nav_msgs/Path
-"""
+Publications:
+  /neuracar/cmd_velocity  std_msgs/Float32   [m/s]
+  /neuracar/cmd_steering  std_msgs/Float32   [-1, 1]
+  /neuracar/path_reference nav_msgs/Path     reference waypoints
+  /neuracar/path_real      nav_msgs/Path     measured trajectory
 
+Parameters:
+  run_name             (str,   vuelta_05_5cm): CSV trajectory (no extension)
+  lookahead            (float, 0.40):  Lookahead distance Lf [m]
+  wheelbase            (float, 0.256): Vehicle wheelbase L [m]
+  speed                (float, 0.50):  Straight speed [m/s]
+  speed_curve          (float, 0.55):  Curve speed [m/s]
+  curve_steer_threshold(float, 0.35):  |steering| threshold for curve mode
+  max_steer            (float, 0.50):  Max steering angle [rad]
+  steering_sign        (float, -1.0):  Servo inversion correction
+  nearest_back_steps   (int,   0):     Local search backward window
+  nearest_fwd_steps    (int,   35):    Local search forward window
+  monotonic_index      (bool,  true):  Prevent backward trajectory jumps
+  loop                 (bool,  false): Repeat trajectory at goal
+  max_loops            (int,   1):     Max laps (0 = infinite)
+  goal_radius          (float, 0.25):  Goal detection radius [m]
+  stop_on_obstacle     (bool,  false): true=end run, false=pause/resume
+══════════════════════════════════════════════════════════════════
+"""
 import csv
 import math
 import os
@@ -232,7 +243,6 @@ class PurePursuitNode(Node):
     def __init__(self):
         super().__init__('pure_pursuit_node')
 
-        # Defaults de la prueba excelente del 2026-06-07.
         self.declare_parameter('run_name', 'vuelta_05_5cm')
         self.declare_parameter('wheelbase', 0.256)
         self.declare_parameter('lookahead', 0.40)
@@ -318,8 +328,6 @@ class PurePursuitNode(Node):
         self.create_timer(0.10, self._record_pose)
         self.create_timer(0.05, self._control_loop)
         self.create_timer(0.50, self._publish_paths)
-        # Publica la referencia periódicamente para que el dashboard la reciba
-        # aunque se abra después del controlador.
         self.create_timer(1.00, self._publish_ref_periodic)
 
         self.get_logger().info('=' * 60)
@@ -380,12 +388,7 @@ class PurePursuitNode(Node):
                                  time.time() - self._start_time))
 
     def _publish_ref_periodic(self):
-        """Publica la trayectoria de referencia de forma periódica.
 
-        No afecta la lógica de control; solo asegura que el dashboard pueda
-        recibir /neuracar/path_reference aunque se abra después de arrancar
-        el controlador.
-        """
         path = Path()
         path.header.stamp = self.get_clock().now().to_msg()
         path.header.frame_id = 'odom'

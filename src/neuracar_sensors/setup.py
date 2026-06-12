@@ -4,7 +4,7 @@ package_name = 'neuracar_sensors'
 
 setup(
     name=package_name,
-    version='0.0.0',
+    version='1.0.0',
     packages=find_packages(exclude=['test']),
     data_files=[
         ('share/ament_index/resource_index/packages',
@@ -13,9 +13,10 @@ setup(
     ],
     install_requires=['setuptools'],
     zip_safe=True,
-    maintainer='devel-ds',
-    maintainer_email='devel-ds@todo.todo',
-    description='TODO: Package description',
+    maintainer='Mariana Manjarrez Lima',
+    maintainer_email='a01735160@tec.mx',
+    description='Serial bridge nodes for NeuraCar ESP32 microcontrollers '
+                '(sensing: encoder + IMU; actuation: ESC + servo).',
     license='TODO: License declaration',
     extras_require={
         'test': [
@@ -24,7 +25,6 @@ setup(
     },
     entry_points={
         'console_scripts': [
-            'teensy_bridge_node = neuracar_sensors.teensy_bridge_node:main',
             'esp32_sensores_node = neuracar_sensors.esp32_sensores_node:main',
             'esp32_actuadores_node = neuracar_sensors.esp32_actuadores_node:main',
         ],

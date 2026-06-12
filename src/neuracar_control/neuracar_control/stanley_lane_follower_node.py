@@ -1,18 +1,56 @@
-#!/usr/bin/env python3
 """
-stanley_lane_follower_node.py — Neuracar v2.0
-Cambio v2.0: publica en cmd_velocity [m/s] y cmd_steering [-1,1]
-en lugar de user_command directo. El PID mantiene velocidad constante.
-Lógica Stanley de seguimiento de carril idéntica a v1.0.
+stanley_lane_follower_node.py — NeuraCar
+══════════════════════════════════════════════════════════════════
+Tecnológico de Monterrey, Campus Puebla — MR3002B, 2026
+ 
+Stanley lane-following controller. Uses lateral error and heading
+error from the lane detector (RealSense D415) instead of pre-recorded
+waypoints. Designed for future validation — architecturally integrated
+but NOT YET experimentally evaluated on track. The lane_detector_node
+pipeline has not been validated; this node is provided as a baseline
+for future work.
+ 
+  delta = atan2(k * cte, |v| + k_soft) + k_yaw * heading_error
+ 
+Unlike stanley_controller_node, this node requires no map or
+pre-recorded trajectory. It reacts purely to the lateral error
+published by the lane detector. If the camera loses the lane for
+more than max_lost consecutive frames, the vehicle stops.
+ 
+Front obstacle detection is active: any LiDAR return closer than
+the configured threshold blocks forward motion immediately.
+ 
+Subscriptions:
+  /neuracar/lane_error            geometry_msgs/Vector3Stamped
+                                  vector.x = lateral error [m]
+                                  vector.y = heading error [rad]
+                                  vector.z = detection confidence [0,1]
+  /neuracar/velocity              geometry_msgs/TwistStamped
+  /neuracar/lidar/obstacle_alert  std_msgs/Bool
+ 
+Publications:
+  /neuracar/cmd_velocity  std_msgs/Float32  [m/s]
+  /neuracar/cmd_steering  std_msgs/Float32  [-1, 1]
+ 
+Parameters:
+  k              (float, 0.40):  Lateral error gain
+  k_yaw          (float, 0.20):  Heading error gain
+  k_soft         (float, 0.30):  Low-speed softening factor
+  speed          (float, 0.30):  Cruise speed [m/s]
+  speed_curve    (float, 0.20):  Curve speed [m/s]
+  min_speed      (float, 0.00):  Minimum speed [m/s]
+  max_steer      (float, 0.50):  Max steering angle [rad]
+  steer_curve_th (float, 0.15):  |steering| threshold for curve mode
+  max_lost       (int,   60):    Frames without detection before stop
+══════════════════════════════════════════════════════════════════
 """
-
 import collections
 import math
 
 import rclpy
 from rclpy.node import Node
-from geometry_msgs.msg import TwistStamped
-from std_msgs.msg import Bool, Float32   # ← CAMBIO v2.0
+from geometry_msgs.msg import TwistStamped, Vector3Stamped
+from std_msgs.msg import Bool, Float32 
 
 
 class StanleyLaneFollower(Node):
@@ -23,9 +61,9 @@ class StanleyLaneFollower(Node):
         self.declare_parameter('k',              0.4)
         self.declare_parameter('k_yaw',          0.2)
         self.declare_parameter('k_soft',         0.3)
-        self.declare_parameter('speed',          0.3)    # m/s crucero ← CAMBIO v2.0
-        self.declare_parameter('speed_curve',    0.2)    # m/s en curva ← CAMBIO v2.0
-        self.declare_parameter('min_speed',      0.0)    # m/s mínimo
+        self.declare_parameter('speed',          0.3)    
+        self.declare_parameter('speed_curve',    0.2)    
+        self.declare_parameter('min_speed',      0.0)    
         self.declare_parameter('max_steer',      0.5)
         self.declare_parameter('max_lost',       60)
         self.declare_parameter('steer_curve_th', 0.15)
@@ -53,7 +91,6 @@ class StanleyLaneFollower(Node):
         self._pub_vel = self.create_publisher(Float32, '/neuracar/cmd_velocity', 10)
         self._pub_str = self.create_publisher(Float32, '/neuracar/cmd_steering',  10)
 
-        from geometry_msgs.msg import Vector3Stamped
         self.create_subscription(Vector3Stamped, '/neuracar/lane_error',
                                  self._lane_cb, 10)
         self.create_subscription(TwistStamped, '/neuracar/velocity',
@@ -61,16 +98,15 @@ class StanleyLaneFollower(Node):
         self.create_subscription(Bool, '/neuracar/lidar/obstacle_alert',
                                  self._obs_cb, 10)
 
-        self.create_timer(0.05, self._control_loop)  # 20 Hz
+        self.create_timer(0.05, self._control_loop)  
 
         self.get_logger().info('=' * 52)
-        self.get_logger().info(' STANLEY LANE FOLLOWER v2.0 — con PID velocidad')
+        self.get_logger().info(' STANLEY LANE FOLLOWER ')
         self.get_logger().info('=' * 52)
         self.get_logger().info(
             f'  k={self._k} k_yaw={self._k_yaw} k_soft={self._k_soft}')
         self.get_logger().info(
             f'  speed={self._speed}m/s curve={self._speed_curve}m/s')
-        self.get_logger().info('  → PID compensa batería NiMH automáticamente')
 
     def _lane_cb(self, msg):
         self._error = msg.vector.x
@@ -115,7 +151,6 @@ class StanleyLaneFollower(Node):
 
         steering_norm = max(-1.0, min(1.0, steer_rad / self._max_steer))
 
-        # Velocidad en m/s — el PID la mantiene con batería descargada
         speed_ms = self._speed_curve if abs(steering_norm) > self._curve_th else self._speed
         speed_ms = max(speed_ms, self._min_speed)
         self._last_steer = steering_norm

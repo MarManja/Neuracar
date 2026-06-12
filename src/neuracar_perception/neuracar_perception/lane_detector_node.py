@@ -1,49 +1,50 @@
-#!/usr/bin/env python3
 """
-=======================================================================
- Lane Detector — Neuracar  (RealSense D415)  v2.2
- Proyecto: Neuracar
------------------------------------------------------------------------
- Detecta la línea amarilla de la pista Quanser mediante segmentación
- HSV y publica el error lateral normalizado para el controlador
- Stanley Lane Follower.
+lane_detector_node.py — NeuraCar
+══════════════════════════════════════════════════════════════════
+Tecnológico de Monterrey, Campus Puebla — MR3002B, 2026
 
- Geometría de cámara (Neuracar):
-   Altura:       131.5 mm del piso a la base de la cámara
-   Inclinación:  11° hacia abajo
-   Visión:       ~170 mm al frente del carro (borde externo)
-                 La línea aparece en la franja 50–90% vertical de imagen
+Detects the yellow track line (Quanser track) using HSV segmentation
+on the Intel RealSense D415 RGB stream. Publishes normalized lateral
+error for the stanley_lane_follower_node.
 
- Topic real RealSense D415 en este setup:
-   /camera/camera/color/image_raw   ← usar con remapping
+NOT YET experimentally validated on track. Provided as baseline
+for future lane-following development.
 
- Lanzar con:
-   ros2 run neuracar_perception lane_detector_node --ros-args \
-     -r /camera/color/image_raw:=/camera/camera/color/image_raw
+Camera geometry (NeuraCar):
+  Height:      131.5 mm from floor to camera base
+  Tilt:        11° downward
+  View range:  ~170 mm ahead of vehicle (outer edge)
+  Line region: 50–90% of image height
 
- Publica:
-   /neuracar/lane_error  (geometry_msgs/Vector3Stamped)
-       vector.x = cross-track error normalizado [-1, 1]
-       vector.y = confianza de detección [0, 1]
-       vector.z = cx en píxeles (debug)
+HSV range for yellow line (Quanser track, indoor lighting):
+  H: 20–30   S: 120–255   V: 120–255
 
-   /neuracar/lane_image  (sensor_msgs/CompressedImage)   [debug]
+Note: RealSense D415 publishes on /camera/camera/color/image_raw
+on this setup. Launch with remapping:
+  ros2 run neuracar_perception lane_detector_node --ros-args \
+    -r /camera/color/image_raw:=/camera/camera/color/image_raw
 
- Parámetros ROS2:
-   use_compressed   (bool)  — usar imagen comprimida     [default: False]
-   roi_top          (float) — fracción superior de ROI   [default: 0.50]
-   roi_bottom       (float) — fracción inferior de ROI   [default: 0.95]
-   target_x_ratio   (float) — x objetivo normalizado     [default: 0.50]
-   min_area         (int)   — área mínima de blob px²    [default: 2000]
-   max_area         (int)   — área máxima de blob px²    [default: 60000]
-   max_cx_jump      (int)   — salto máximo de cx px      [default: 200]
-   publish_debug    (bool)  — publicar imagen debug      [default: True]
+Subscriptions:
+  /camera/color/image_raw   sensor_msgs/Image  (remapped, see above)
 
- Rangos HSV para línea amarilla (pista Quanser, luz interior):
-   H: 20–30  S: 120–255  V: 120–255
-=======================================================================
+Publications:
+  /neuracar/lane_error   geometry_msgs/Vector3Stamped
+                         vector.x = lateral CTE normalized [-1, 1]
+                         vector.y = detection confidence   [0, 1]
+                         vector.z = centroid x in pixels (debug)
+  /neuracar/lane_image   sensor_msgs/CompressedImage (debug only)
+
+Parameters:
+  use_compressed (bool,  false): Use compressed image topic
+  roi_top        (float, 0.50):  ROI top fraction
+  roi_bottom     (float, 0.95):  ROI bottom fraction
+  target_x_ratio (float, 0.50):  Target normalized x position
+  min_area       (int,   2000):  Minimum blob area [px²]
+  max_area       (int,   60000): Maximum blob area [px²]
+  max_cx_jump    (int,   200):   Maximum centroid jump [px]
+  publish_debug  (bool,  true):  Publish debug image
+══════════════════════════════════════════════════════════════════
 """
-
 import cv2
 import numpy as np
 import rclpy
@@ -52,22 +53,19 @@ from rclpy.qos import qos_profile_sensor_data
 from geometry_msgs.msg import Vector3Stamped
 from sensor_msgs.msg import Image, CompressedImage
 
-
 class LaneDetector(Node):
 
     def __init__(self):
         super().__init__('lane_detector')
 
-        # ── Parámetros ─────────────────────────────────────────────
         self.declare_parameter('use_compressed',  False)
-        self.declare_parameter('roi_top',         0.50)   # línea aparece desde el 50%
-        self.declare_parameter('roi_bottom',      0.95)   # deja margen inferior
+        self.declare_parameter('roi_top',         0.50)   
+        self.declare_parameter('roi_bottom',      0.95)   
         self.declare_parameter('target_x_ratio',  0.50)
         self.declare_parameter('min_area',        2000)
         self.declare_parameter('max_area',        60000)
         self.declare_parameter('max_cx_jump',     200)
         self.declare_parameter('publish_debug',   True)
-        # Rango HSV — línea amarilla pista Quanser
         self.declare_parameter('hsv_low_h',   20)
         self.declare_parameter('hsv_low_s',   120)
         self.declare_parameter('hsv_low_v',   120)
@@ -95,12 +93,10 @@ class LaneDetector(Node):
             self.get_parameter('hsv_high_v').value,
         ])
 
-        # ── Estado ─────────────────────────────────────────────────
         self._last_cx    = None
         self._lost_count = 0
         self._MAX_LOST   = 30
 
-        # ── Publishers ─────────────────────────────────────────────
         self._pub_error = self.create_publisher(
             Vector3Stamped, '/neuracar/lane_error', 10)
 
@@ -108,7 +104,6 @@ class LaneDetector(Node):
             self._pub_img = self.create_publisher(
                 CompressedImage, '/neuracar/lane_image', qos_profile_sensor_data)
 
-        # ── Subscriber ─────────────────────────────────────────────
         if self._use_compressed:
             self.create_subscription(
                 CompressedImage,
@@ -135,7 +130,6 @@ class LaneDetector(Node):
         self.get_logger().info(
             f'  Área válida: [{self._min_area}, {self._max_area}] px²')
 
-    # ── Callbacks de imagen ────────────────────────────────────────
     def _image_cb(self, msg: Image):
         frame = np.frombuffer(msg.data, dtype=np.uint8).reshape(
             msg.height, msg.width, -1)
@@ -150,25 +144,20 @@ class LaneDetector(Node):
             return
         self._process(frame, msg.header.stamp)
 
-    # ── Procesamiento de carril ────────────────────────────────────
     def _process(self, frame: np.ndarray, stamp):
         h, w = frame.shape[:2]
 
-        # ── ROI configurable ──────────────────────────────────────
         roi_y_top = int(h * self._roi_top)
         roi_y_bot = int(h * self._roi_bottom)
         roi = frame[roi_y_top:roi_y_bot, :]
 
-        # ── Segmentación HSV ──────────────────────────────────────
         hsv  = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
         mask = cv2.inRange(hsv, self._hsv_low, self._hsv_high)
 
-        # ── Morfología ────────────────────────────────────────────
         kernel = np.ones((5, 5), np.uint8)
         mask   = cv2.erode(mask,  kernel, iterations=1)
         mask   = cv2.dilate(mask, kernel, iterations=2)
 
-        # ── Contorno más grande dentro del rango de área ──────────
         contours, _ = cv2.findContours(
             mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
@@ -197,7 +186,6 @@ class LaneDetector(Node):
                             f'last={self._last_cx}  area={int(area)}',
                             throttle_duration_sec=0.5)
 
-        # ── Publicar error lateral ────────────────────────────────
         err_msg = Vector3Stamped()
         err_msg.header.stamp    = stamp
         err_msg.header.frame_id = 'camera_color_optical_frame'
@@ -228,21 +216,17 @@ class LaneDetector(Node):
 
         self._pub_error.publish(err_msg)
 
-        # ── Imagen de debug ───────────────────────────────────────
         if self._publish_debug:
             debug = frame.copy()
 
-            # ROI activo (verde)
             cv2.rectangle(debug, (0, roi_y_top), (w, roi_y_bot), (0, 255, 0), 2)
 
-            # Máscara amarilla superpuesta en ROI
             mask_color = cv2.cvtColor(mask, cv2.COLOR_GRAY2BGR)
             mask_color[:, :, 0] = 0
             mask_color[:, :, 2] = 0
             debug[roi_y_top:roi_y_bot, :] = cv2.addWeighted(
                 debug[roi_y_top:roi_y_bot, :], 0.6, mask_color, 0.4, 0)
 
-            # Centroide y línea objetivo
             if valid:
                 cv2.circle(debug, (cx, roi_y_top + cy_roi), 10, (0, 0, 255), -1)
                 cv2.line(debug,
@@ -250,7 +234,6 @@ class LaneDetector(Node):
                          (int(w * self._target_x_ratio), roi_y_bot),
                          (255, 0, 0), 2)
 
-            # Info en imagen
             status = f'area={int(best_area)} cx={cx}' if valid else 'NO DETECT'
             cv2.putText(debug, status, (10, roi_y_top + 20),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 2)
@@ -264,7 +247,6 @@ class LaneDetector(Node):
             self._pub_img.publish(img_msg)
 
 
-# ────────────────────────────────────────────────────────────────────
 def main(args=None):
     rclpy.init(args=args)
     node = LaneDetector()

@@ -1,42 +1,29 @@
-#!/usr/bin/env python3
 """
-=======================================================================
- Path Recorder Node — Neuracar  v2.0
- Proyecto: Neuracar / Smart Mobility
------------------------------------------------------------------------
- Graba la trayectoria del robot desde /neuracar/odometry.
+path_recorder_node.py — NeuraCar
+══════════════════════════════════════════════════════════════════
+Tecnológico de Monterrey, Campus Puebla — MR3002B, 2026
 
- Cambios v2.0:
-   - Graba TODOS los puntos que llegan (sin filtro de distancia mínima),
-     igual que el grabador del QCar — el carro puede estar quieto al
-     inicio sin perder el punto de arranque.
-   - Parámetro downsample_dist: distancia mínima al GUARDAR en CSV
-     (post-procesamiento, no filtra en tiempo real). Default 0.0 = sin filtro.
-   - Imprime resumen de densidad al guardar para ayudar a elegir el
-     lookahead correcto en el controlador.
+Records reference trajectories from odometry. Stores all incoming
+points in memory and applies optional downsampling only at save time
+(Ctrl+C), ensuring the vehicle can remain stationary at the start
+without losing the initial waypoint.
 
- Suscribe:
-   /neuracar/odometry  (nav_msgs/Odometry)
+Saves to:
+  ~/Workspaces/Neuracar/src/neuracar_control/data/trajectories/
+  Columns: x [m], y [m], theta [rad]
 
- Salida CSV:
-   ~/Workspaces/Neuracar/src/neuracar_control/data/trajectories/<run_name>.csv
-   Columnas: x, y, theta   [m, m, rad]
+Subscriptions:
+  /neuracar/odometry    nav_msgs/Odometry
 
- Parámetros ROS2:
-   run_name        (str)   — nombre del archivo sin extensión
-                              default: 'track_YYYYMMDD_HHMMSS'
-   downsample_dist (float) — distancia mínima entre puntos al guardar [m]
-                              0.0 = sin downsample (guarda todo)
-                              0.05 = cada 5 cm (recomendado para Pure Pursuit)
-                              0.02 = cada 2 cm  (recomendado para Stanley)
-
- Uso:
-   ros2 run neuracar_control path_recorder --ros-args -p run_name:=vuelta_04
-   ros2 run neuracar_control path_recorder \
-     --ros-args -p run_name:=vuelta_04 -p downsample_dist:=0.05
-=======================================================================
+Parameters:
+  run_name        (str,   auto):  Output filename without extension.
+                                  Default: track_YYYYMMDD_HHMMSS
+  downsample_dist (float, 0.05):  Minimum distance between saved
+                                  waypoints [m]. 0.0 = save all.
+                                  0.05 recommended for Pure Pursuit
+                                  0.02 recommended for Stanley
+══════════════════════════════════════════════════════════════════
 """
-
 import csv
 import math
 import os
@@ -48,17 +35,13 @@ from nav_msgs.msg import Odometry
 
 
 def resolve_data_dir() -> str:
-    """
-    Carpeta de trayectorias de referencia:
-      ~/Workspaces/Neuracar/src/neuracar_control/data/trajectories/
-    Si no existe, la crea (equivalente a mkdir -p).
-    """
+  
     pkg_src = os.path.expanduser(
         "~/Workspaces/Neuracar/src/neuracar_control"
     )
     if os.path.isdir(pkg_src):
         base = os.path.join(pkg_src, "data", "trajectories")
-        os.makedirs(base, exist_ok=True)  # equivale a mkdir -p
+        os.makedirs(base, exist_ok=True)  
         return base
 
     try:
@@ -68,7 +51,7 @@ def resolve_data_dir() -> str:
             os.path.expanduser("~/Workspaces/Neuracar/src"),
             "neuracar_control", "data", "trajectories"
         )
-        os.makedirs(base, exist_ok=True)  # equivale a mkdir -p
+        os.makedirs(base, exist_ok=True)  
         return base
     except Exception:
         pass
@@ -76,7 +59,7 @@ def resolve_data_dir() -> str:
     fallback = os.path.expanduser(
         "~/Workspaces/Neuracar/src/neuracar_control/data/trajectories"
     )
-    os.makedirs(fallback, exist_ok=True)  # equivale a mkdir -p
+    os.makedirs(fallback, exist_ok=True)  
     return fallback
 
 
@@ -91,7 +74,6 @@ def dist2d(p, q) -> float:
 
 
 def downsample(points, min_dist: float):
-    """Filtra puntos manteniendo solo los que están al menos min_dist del anterior."""
     if min_dist <= 0.0 or not points:
         return points
     out = [points[0]]
@@ -106,9 +88,8 @@ class PathRecorder(Node):
     def __init__(self):
         super().__init__('path_recorder')
 
-        # ── Parámetros ─────────────────────────────────────────────
         self.declare_parameter('run_name',        '')
-        self.declare_parameter('downsample_dist', 0.05)  # con 5 cm de filtro por defecto
+        self.declare_parameter('downsample_dist', 0.05)  
 
         run_name = self.get_parameter('run_name').value
         if not run_name:
@@ -116,7 +97,6 @@ class PathRecorder(Node):
 
         self._ds_dist = self.get_parameter('downsample_dist').value
 
-        # ── Ruta de salida ─────────────────────────────────────────
         self._data_dir = resolve_data_dir()
         self._outfile  = os.path.join(self._data_dir, f'{run_name}.csv')
 
@@ -125,8 +105,7 @@ class PathRecorder(Node):
             self._outfile = os.path.join(
                 self._data_dir, f'{run_name}{suffix}.csv')
 
-        # ── Estado — guarda TODOS los puntos sin filtro ────────────
-        self._points = []   # lista de (x, y, theta)
+        self._points = [] 
 
         # ── Subscriber ─────────────────────────────────────────────
         self.create_subscription(
@@ -135,7 +114,7 @@ class PathRecorder(Node):
         ds_str = (f'{self._ds_dist*100:.0f} cm'
                   if self._ds_dist > 0 else 'sin filtro (guarda todo)')
         self.get_logger().info('=' * 52)
-        self.get_logger().info(' PATH RECORDER v2.0 — Neuracar')
+        self.get_logger().info(' PATH RECORDER — Neuracar')
         self.get_logger().info('=' * 52)
         self.get_logger().info(f'  Archivo       : {self._outfile}')
         self.get_logger().info(f'  Downsample    : {ds_str}')
@@ -143,7 +122,6 @@ class PathRecorder(Node):
         self.get_logger().info('  Puedes arrancar quieto — no se perderá el punto inicial.')
         self.get_logger().info('  Ctrl+C para guardar.')
 
-    # ──────────────────────────────────────────────────────────────
     def _odom_cb(self, msg: Odometry):
         """Guarda TODOS los puntos — sin filtro de distancia."""
         x = msg.pose.pose.position.x
@@ -166,11 +144,9 @@ class PathRecorder(Node):
 
         raw_n = len(self._points)
 
-        # Aplicar downsample al guardar (no en tiempo real)
         pts_to_save = downsample(self._points, self._ds_dist)
         saved_n = len(pts_to_save)
 
-        # Calcular densidad media
         if saved_n > 1:
             total_len = sum(
                 dist2d((pts_to_save[i][0], pts_to_save[i][1]),
@@ -196,9 +172,8 @@ class PathRecorder(Node):
                 f'  Longitud total:        {total_len:.2f} m')
             self.get_logger().info(
                 f'  Distancia media/wp:    {mean_dist_cm:.1f} cm')
-            # Recomendación de lookahead para el controlador
             if mean_dist_cm > 0:
-                wp_per_sec_55 = 55.0 / mean_dist_cm  # a 0.55 m/s
+                wp_per_sec_55 = 55.0 / mean_dist_cm  
                 self.get_logger().info(
                     f'  wp/s a speed=0.55:     {wp_per_sec_55:.0f}  '
                     f'→ lookahead recomendado ≥ {int(wp_per_sec_55*3)}')

@@ -1,31 +1,40 @@
-#!/usr/bin/env python3
 """
-keyboard_control_node.py — Neuracar v2.0
-=========================================
-Controla el vehículo desde el teclado publicando velocidad en m/s y
-steering normalizado, igual que los nodos xbox y ps.
+keyboard_control_node.py — NeuraCar
+══════════════════════════════════════════════════════════════════
+Tecnológico de Monterrey, Campus Puebla — MR3002B, 2026
 
-Arquitectura (consistente con xbox/ps v2.0):
-  Este nodo  →  /neuracar/cmd_velocity  [Float32, m/s]
-  Este nodo  →  /neuracar/cmd_steering  [Float32, -1..1]
-               ↓
-  velocity_pid_node  →  /neuracar/user_command  →  esp32_actuadores
+Keyboard teleop node. Publishes cmd_velocity [m/s] and
+cmd_steering [-1,1] for velocity_pid_node to convert to throttle.
 
-El velocity_pid_node se encarga de convertir la velocidad deseada en
-throttle real, compensando caída de batería y no-linealidades del ESC.
+W/S → increase/decrease speed (steps of speed_step m/s)
+      W goes positive (forward), S goes negative (reverse)
+A/D → steer left / right
+SPACE → stop (velocity and steering to 0)
+Q   → stop and quit
 
-Suscripciones:
-  /neuracar/lidar/obstacle_alert       (Bool) — bloquea avance
-  /neuracar/lidar/obstacle_alert_rear  (Bool) — bloquea reversa
+Obstacle logic:
+  Front obstacle → blocks forward motion  (speed > 0 → 0)
+                   allows reverse         (speed < 0 → unchanged)
+  Rear obstacle  → blocks reverse motion  (speed < 0 → 0)
+                   allows forward         (speed > 0 → unchanged)
 
-Teclas:
-  W / S   — aumentar / reducir velocidad (pasos de speed_step m/s)
-  A / D   — girar izquierda / derecha
-  SPACE   — parar (velocidad y steering a 0)
-  Q       — parar y salir
+Subscriptions:
+  /neuracar/lidar/obstacle_alert      std_msgs/Bool
+  /neuracar/lidar/obstacle_alert_rear std_msgs/Bool
+
+Publications:
+  /neuracar/cmd_velocity  std_msgs/Float32  [m/s]
+  /neuracar/cmd_steering  std_msgs/Float32  [-1, 1]
+
+Parameters:
+  max_speed     (float, 0.5):  Maximum speed [m/s]
+  speed_step    (float, 0.05): Speed increment per W/S keypress [m/s]
+  steering_step (float, 0.10): Steering increment per A/D keypress
+  max_steering  (float, 1.0):  Steering limit [-1, 1]
+══════════════════════════════════════════════════════════════════
 """
-
 import sys
+import select
 import termios
 import tty
 
@@ -39,24 +48,21 @@ class KeyboardControlNode(Node):
     def __init__(self):
         super().__init__('keyboard_control_node')
 
-        # ── Parámetros ──────────────────────────────────────────────────
-        self.declare_parameter('max_speed',    0.5)   # m/s máximo pedido
-        self.declare_parameter('speed_step',   0.05)  # m/s por pulsación W/S
-        self.declare_parameter('steering_step', 0.10) # incremento por pulsación A/D
-        self.declare_parameter('max_steering',  1.0)  # límite steering [-1, 1]
+        self.declare_parameter('max_speed',     0.5)
+        self.declare_parameter('speed_step',    0.05)
+        self.declare_parameter('steering_step', 0.10)
+        self.declare_parameter('max_steering',  1.0)
 
         self._max_speed     = self.get_parameter('max_speed').value
         self._speed_step    = self.get_parameter('speed_step').value
         self._steering_step = self.get_parameter('steering_step').value
         self._max_steering  = self.get_parameter('max_steering').value
 
-        # ── Estado interno ──────────────────────────────────────────────
-        self._speed_ms  = 0.0   # velocidad deseada [m/s]
-        self._steering  = 0.0   # steering deseado [-1, 1]
+        self._speed_ms      = 0.0
+        self._steering      = 0.0
+        self._obstacle      = False
+        self._obstacle_rear = False
 
-        # ── Obstacle alerts ─────────────────────────────────────────────
-        self._obstacle      = False   # obstáculo al frente
-        self._obstacle_rear = False   # obstáculo atrás
         self.create_subscription(
             Bool, '/neuracar/lidar/obstacle_alert',
             self._alert_cb, 10)
@@ -64,65 +70,58 @@ class KeyboardControlNode(Node):
             Bool, '/neuracar/lidar/obstacle_alert_rear',
             self._alert_rear_cb, 10)
 
-        # ── Publishers — mismos tópicos que xbox/ps v2.0 ────────────────
-        # El velocity_pid_node escucha aquí y genera el throttle real.
         self._pub_vel = self.create_publisher(Float32, '/neuracar/cmd_velocity', 10)
         self._pub_str = self.create_publisher(Float32, '/neuracar/cmd_steering', 10)
 
-        self.get_logger().info('Keyboard control v2.0 — publicando cmd_velocity / cmd_steering')
         self.get_logger().info(
-            f'max_speed={self._max_speed} m/s  |  speed_step={self._speed_step} m/s')
-        self.get_logger().info('W/S: velocidad | A/D: steering | SPACE: stop | Q: salir')
+            f'Keyboard control — max_speed={self._max_speed} m/s  '
+            f'step={self._speed_step} m/s')
+        self.get_logger().info('W/S: speed | A/D: steer | SPACE: stop | Q: quit')
 
-    # ── Callbacks de obstáculos ─────────────────────────────────────────
     def _alert_cb(self, msg: Bool):
         self._obstacle = msg.data
         if msg.data:
             self.get_logger().warn(
-                'Obstáculo al FRENTE — avance bloqueado',
+                'Obstáculo FRENTE — avance bloqueado, reversa permitida',
                 throttle_duration_sec=1.0)
 
     def _alert_rear_cb(self, msg: Bool):
         self._obstacle_rear = msg.data
         if msg.data:
             self.get_logger().warn(
-                'Obstáculo TRASERO — reversa bloqueada',
+                'Obstáculo TRASERO — reversa bloqueada, avance permitido',
                 throttle_duration_sec=1.0)
 
-    # ── Lectura de teclado (bloqueante, raw mode) ───────────────────────
     def _get_key(self) -> str:
+        """Non-blocking key read with 0.1 s timeout.
+        Allows ROS callbacks to be processed between keypresses."""
         fd = sys.stdin.fileno()
         old_settings = termios.tcgetattr(fd)
         try:
             tty.setraw(fd)
-            key = sys.stdin.read(1)
+            rr, _, _ = select.select([sys.stdin], [], [], 0.1)
+            key = sys.stdin.read(1) if rr else ''
         finally:
             termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
         return key
 
-    # ── Publicar velocidad y steering actuales ──────────────────────────
     def _publish(self):
         speed = self._speed_ms
 
-        # Bloqueo por obstáculo: anula velocidad en la dirección bloqueada
-        if self._obstacle      and speed > 0.0:
+        if self._obstacle and speed > 0.0:
             speed = 0.0
+
         if self._obstacle_rear and speed < 0.0:
             speed = 0.0
 
-        vel_msg = Float32()
-        vel_msg.data = float(speed)
-        self._pub_vel.publish(vel_msg)
+        v = Float32(); v.data = float(speed)
+        s = Float32(); s.data = float(self._steering)
+        self._pub_vel.publish(v)
+        self._pub_str.publish(s)
 
-        str_msg = Float32()
-        str_msg.data = float(self._steering)
-        self._pub_str.publish(str_msg)
-
-    # ── Loop principal ──────────────────────────────────────────────────
     def run(self):
         while rclpy.ok():
-            # Procesar callbacks (obstacle alerts) antes de leer tecla
-            rclpy.spin_once(self, timeout_sec=0)
+            rclpy.spin_once(self, timeout_sec=0.05)
 
             key = self._get_key()
 
@@ -143,7 +142,6 @@ class KeyboardControlNode(Node):
                 self._publish()
                 break
 
-            # Clamp a límites
             self._speed_ms = max(
                 -self._max_speed, min(self._max_speed, self._speed_ms))
             self._steering = max(
@@ -151,10 +149,11 @@ class KeyboardControlNode(Node):
 
             self._publish()
 
+            status = ''
+            if self._obstacle:      status += '  [FRENTE BLOQUEADO]'
+            if self._obstacle_rear: status += '  [TRASERO BLOQUEADO]'
             self.get_logger().info(
-                f'vel={self._speed_ms:+.2f} m/s  steer={self._steering:+.2f}'
-                + ('  [FRENTE BLOQUEADO]' if self._obstacle      else '')
-                + ('  [TRASERO BLOQUEADO]' if self._obstacle_rear else ''))
+                f'vel={self._speed_ms:+.2f}m/s  steer={self._steering:+.2f}{status}')
 
 
 def main(args=None):
@@ -163,7 +162,6 @@ def main(args=None):
     try:
         node.run()
     except KeyboardInterrupt:
-        # Enviar parada segura antes de salir
         node._speed_ms = 0.0
         node._steering = 0.0
         node._publish()

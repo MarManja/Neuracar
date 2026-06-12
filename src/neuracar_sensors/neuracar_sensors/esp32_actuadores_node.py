@@ -1,16 +1,33 @@
-#!/usr/bin/env python3
 """
-esp32_actuadores_node.py — Neuracar v2.0
-==========================================
-Patrón latest-only: un hilo TX dedicado manda solo el comando
-más reciente a frecuencia fija. Nunca acumula comandos en cola.
+esp32_actuadores_node.py — NeuraCar
+══════════════════════════════════════════════════════════════════
+Tecnológico de Monterrey, Campus Puebla — MR3002B, 2026
 
-Cambios vs v1.0:
-  - _cmd_cb() solo GUARDA el último comando (no manda nada)
-  - Hilo _tx_loop() manda al serial a TX_HZ fijo
-  - QoS depth=1 en el subscriber: ROS2 solo guarda el último mensaje
-  - reset_input_buffer() al iniciar para limpiar basura del CH340
-  - Watchdog integrado en el hilo TX (sin timer separado)
+Serial bridge for the actuation ESP32 (port /dev/esp32a, 921600 baud).
+Implements a latest-only TX pattern: a dedicated thread transmits at
+20 Hz, always sending the most recent command and discarding any
+intermediate values. This prevents CH340 buffer accumulation that
+caused servo hunting in earlier revisions.
+
+A Python-side watchdog zeroes the command if no
+/neuracar/user_command message arrives within watchdog_s seconds,
+ensuring the ESC and servo return to neutral on communication loss.
+
+Serial frame sent:
+  C,{throttle:.3f},{steering:.3f}   @ 20 Hz   values in [-1, 1]
+  SHUTDOWN                          on ROS shutdown
+
+Subscriptions:
+  /neuracar/user_command  geometry_msgs/Vector3Stamped
+                          vector.x = throttle [-1, 1]
+                          vector.y = steering [-1, 1]
+
+Parameters:
+  port       (str,   /dev/esp32a): Serial port — must be upper-left
+                                   USB-A port on Jetson carrier board
+  baudrate   (int,   921600):      Serial baud rate
+  watchdog_s (float, 0.50):        Timeout before zeroing command [s]
+══════════════════════════════════════════════════════════════════
 """
 
 import threading
@@ -28,12 +45,7 @@ try:
 except ImportError:
     raise SystemExit('pip install pyserial --break-system-packages')
 
-# Frecuencia a la que el hilo TX manda comandos al ESP32-A
-# 20 Hz es suficiente para el servo/ESC — watchdog ESP32 en 2000ms
-# Bajar esto reduce drásticamente la acumulación en el buffer del CH340
 TX_HZ = 20
-
-
 class ActuadoresBridgeNode(Node):
 
     def __init__(self):
@@ -47,7 +59,6 @@ class ActuadoresBridgeNode(Node):
         baud       = self.get_parameter('baudrate').value
         self._wd_s = self.get_parameter('watchdog_s').value
 
-        # Último comando — solo este se manda, los anteriores se descartan
         self._lock      = threading.Lock()
         self._throttle  = 0.0
         self._steering  = 0.0
@@ -59,7 +70,6 @@ class ActuadoresBridgeNode(Node):
                 port, baud,
                 timeout=0.01,
                 write_timeout=0.02)
-            # Limpiar buffer del CH340 al arrancar — elimina basura acumulada
             self._ser.reset_input_buffer()
             self._ser.reset_output_buffer()
             self.get_logger().info(f'ESP32-A conectada: {port} @ {baud}')
@@ -69,8 +79,6 @@ class ActuadoresBridgeNode(Node):
 
         self.pub_status = self.create_publisher(String, '/neuracar/status', 10)
 
-        # QoS depth=1: ROS2 solo guarda el mensaje más reciente en la cola
-        # Si llegan 10 mensajes antes de que el callback corra, solo procesa el último
         qos_latest = QoSProfile(
             history=QoSHistoryPolicy.KEEP_LAST,
             depth=1,
@@ -93,18 +101,15 @@ class ActuadoresBridgeNode(Node):
             10,
             callback_group=cb_group)
 
-        # Hilo TX dedicado — manda solo el último comando a TX_HZ
         self._alive = True
         self._tx_thread = threading.Thread(target=self._tx_loop, daemon=True)
         self._tx_thread.start()
 
-        # Hilo RX — solo STA ocasionales del ESP32-A
         self._rx_thread = threading.Thread(target=self._rx_loop, daemon=True)
         self._rx_thread.start()
 
-        self.get_logger().info(f'Actuadores bridge v2.0 listo. TX @ {TX_HZ} Hz')
+        self.get_logger().info(f'Actuadores bridge listo. TX @ {TX_HZ} Hz')
 
-    # ── Callbacks ROS2 — solo guardan el estado, NO mandan serial ────
 
     def _cmd_cb(self, msg: Vector3Stamped):
         t = max(-1.0, min(1.0, float(msg.vector.x)))
@@ -124,7 +129,6 @@ class ActuadoresBridgeNode(Node):
             self._serial_write(b'SHUTDOWN\n')
             self.get_logger().warn(f'Actuadores bloqueados: {msg.data}')
 
-    # ── Hilo TX — único punto que escribe al serial ───────────────────
 
     def _tx_loop(self):
         interval = 1.0 / TX_HZ
@@ -140,7 +144,6 @@ class ActuadoresBridgeNode(Node):
             if blocked:
                 cmd = b'C,0.000,0.000\n'
             elif elapsed > self._wd_s:
-                # Watchdog: sin comando reciente → neutro
                 cmd = b'C,0.000,0.000\n'
                 with self._lock:
                     self._throttle = 0.0
@@ -150,13 +153,10 @@ class ActuadoresBridgeNode(Node):
 
             self._serial_write(cmd)
 
-            # Dormir el tiempo restante para mantener TX_HZ exacto
             elapsed_loop = time.monotonic() - loop_start
             sleep_t = interval - elapsed_loop
             if sleep_t > 0:
                 time.sleep(sleep_t)
-
-    # ── Hilo RX — solo lee STA del ESP32-A ───────────────────────────
 
     def _rx_loop(self):
         while self._alive:
@@ -182,17 +182,15 @@ class ActuadoresBridgeNode(Node):
             except Exception:
                 pass
 
-    # ── Serial write con protección ───────────────────────────────────
 
     def _serial_write(self, data: bytes):
         try:
             self._ser.write(data)
         except serial.SerialTimeoutException:
-            pass  # CH340 ocupado — el siguiente ciclo TX lo reintenta
+            pass 
         except serial.SerialException as exc:
             self.get_logger().error(f'TX error: {exc}')
 
-    # ── Cleanup ───────────────────────────────────────────────────────
 
     def destroy_node(self):
         self._alive = False

@@ -1,23 +1,34 @@
-#!/usr/bin/env python3
 """
-dashboard_node.py — Neuracar v3.0
-====================================
-Dashboard principal — sin cámara, con trayectoria referencia vs real
-en tiempo real, PID velocidad, LiDAR, pose y todos los topics necesarios.
+dashboard_node.py — NeuraCar
+══════════════════════════════════════════════════════════════════
+Tecnológico de Monterrey, Campus Puebla — MR3002B, 2026
 
-Topics:
-  /neuracar/path_reference   nav_msgs/Path      — trayectoria CSV (referencia)
-  /neuracar/path_real        nav_msgs/Path      — trayectoria real acumulada
-  /neuracar/odometry         nav_msgs/Odometry  — pose actual
-  /neuracar/velocity         TwistStamped       — velocidad real
-  /neuracar/cmd_velocity     Float32            — setpoint PID [m/s]
-  /neuracar/wheel_speed      Float32            — velocidad encoder [m/s]
-  /neuracar/user_command     Vector3Stamped     — throttle/steering al ESP32
-  /neuracar/cmd_steering     Float32            — steering setpoint
-  /neuracar/lidar/obstacle_alert  Bool          — obstáculo
-  /neuracar/status           String             — eventos firmware
+Real-time telemetry dashboard built with PyQt5 and pyqtgraph.
+Displays reference vs measured trajectory, velocity PID response,
+throttle, steering, lateral error, obstacle status, and odometry.
+Runs independently from the autonomous stack — launch separately
+and it will reconnect automatically when topics become available.
+
+Requires: PyQt5, pyqtgraph
+On Jetson without display: ssh -X devel-ds@ip and run from laptop
+if ROS_DOMAIN_ID is shared.
+
+Subscriptions:
+  /neuracar/path_reference       nav_msgs/Path
+  /neuracar/path_real            nav_msgs/Path
+  /neuracar/odometry             nav_msgs/Odometry
+  /neuracar/velocity             geometry_msgs/TwistStamped
+  /neuracar/cmd_velocity         std_msgs/Float32
+  /neuracar/wheel_speed          std_msgs/Float32
+  /neuracar/user_command         geometry_msgs/Vector3Stamped
+  /neuracar/cmd_steering         std_msgs/Float32
+  /neuracar/lidar/obstacle_alert std_msgs/Bool
+  /neuracar/status               std_msgs/String
+
+Publications:
+  None — visualization only.
+══════════════════════════════════════════════════════════════════
 """
-
 import sys
 import math
 import threading
@@ -46,11 +57,10 @@ GREEN  = '#3FB950'; YELLOW = '#E3B341'; RED    = '#FF4444'
 CYAN   = '#00E5CC'; WHITE  = '#E6EDF3'; DIM    = '#8B949E'
 BLUE   = '#4C9EF0'; ORANGE = '#FF8C00'
 
-HISTORY_N = 500   # puntos en historial de velocidad (~50Hz × 10s)
-HISTORY_S = 15    # segundos visibles en gráficas de velocidad
+HISTORY_N = 500   
+HISTORY_S = 15   
 
 
-# ── ROS Backend ───────────────────────────────────────────────────────
 class DashboardBackend(Node):
 
     def __init__(self):
@@ -63,8 +73,6 @@ class DashboardBackend(Node):
 
         self.lock = threading.Lock()
 
-        # ── Estado ───────────────────────────────────────────────────
-        # Trayectorias
         self.ref_xs:  list = []
         self.ref_ys:  list = []
         self.real_xs: list = []
@@ -79,21 +87,18 @@ class DashboardBackend(Node):
         # Velocidad
         self.vel_linear  = 0.0
         self.vel_angular = 0.0
-        self.pid_sp      = 0.0    # setpoint [m/s]
-        self.pid_real    = 0.0    # medición encoder [m/s]
+        self.pid_sp      = 0.0   
+        self.pid_real    = 0.0    
         self.pid_error   = 0.0
         self.throttle    = 0.0
         self.steering    = 0.0
         self.steer_sp    = 0.0
 
-        # LiDAR
         self.obstacle    = False
         self.obs_stops   = 0
 
-        # Status firmware
         self.status_buf: deque = deque(maxlen=5)
 
-        # Historial para gráficas
         self.t_start   = None
         self.h_t       = deque(maxlen=HISTORY_N)
         self.h_sp      = deque(maxlen=HISTORY_N)
@@ -104,20 +109,16 @@ class DashboardBackend(Node):
         self._sp_t     = 0.0
         self._real_t   = 0.0
 
-        # ── Subscripciones ───────────────────────────────────────────
-        # Trayectorias
         self.create_subscription(
             Path, '/neuracar/path_reference', self._ref_cb, 10)
         self.create_subscription(
             Path, '/neuracar/path_real', self._real_path_cb, qos_be)
 
-        # Pose y velocidad
         self.create_subscription(
             Odometry, '/neuracar/odometry', self._odom_cb, qos_be)
         self.create_subscription(
             TwistStamped, '/neuracar/velocity', self._vel_cb, qos_be)
 
-        # PID
         self.create_subscription(
             Float32, '/neuracar/cmd_velocity', self._sp_cb, 10)
         self.create_subscription(
@@ -125,21 +126,16 @@ class DashboardBackend(Node):
         self.create_subscription(
             Float32, '/neuracar/cmd_steering', self._steer_sp_cb, 10)
 
-        # Comando al ESP32
         self.create_subscription(
             Vector3Stamped, '/neuracar/user_command', self._cmd_cb, 10)
 
-        # LiDAR
         self.create_subscription(
             Bool, '/neuracar/lidar/obstacle_alert', self._obs_cb, 10)
 
-        # Status
         self.create_subscription(
             String, '/neuracar/status', self._status_cb, 10)
 
-        self.get_logger().info('Dashboard v3.0 iniciado')
-
-    # ── Callbacks ────────────────────────────────────────────────────
+        self.get_logger().info('Dashboard iniciado')
 
     def _ref_cb(self, msg: Path):
         xs = [p.pose.position.x for p in msg.poses]
@@ -184,7 +180,6 @@ class DashboardBackend(Node):
             self.pid_error = self.pid_sp - self.pid_real
             self._real_t   = now
 
-        # Alimentar historial desde wheel_speed @ 50Hz
         if self.t_start is None:
             self.t_start = now
         t = now - self.t_start
@@ -216,13 +211,12 @@ class DashboardBackend(Node):
             self.status_buf.append(msg.data)
 
 
-# ── Dashboard GUI ─────────────────────────────────────────────────────
 class Dashboard(QMainWindow):
 
     def __init__(self, node: DashboardBackend):
         super().__init__()
         self.node = node
-        self.setWindowTitle('Neuracar Dashboard v3.0')
+        self.setWindowTitle('Neuracar Dashboard')
         self.setMinimumSize(1400, 800)
         self._apply_style()
 
@@ -235,7 +229,6 @@ class Dashboard(QMainWindow):
         splitter = QSplitter(Qt.Horizontal)
         root.addWidget(splitter)
 
-        # ── Columna izquierda: indicadores ───────────────────────────
         left = QWidget()
         left.setFixedWidth(300)
         lv = QVBoxLayout(left)
@@ -249,13 +242,12 @@ class Dashboard(QMainWindow):
         lv.addStretch()
         splitter.addWidget(left)
 
-        # ── Columna derecha: trayectoria + gráficas ──────────────────
         right = QWidget()
         rv = QVBoxLayout(right)
         rv.setSpacing(5)
         rv.setContentsMargins(0, 0, 0, 0)
-        rv.addWidget(self._build_trajectory(), 3)   # trayectoria — más grande
-        rv.addWidget(self._build_plots(), 2)         # gráficas de velocidad
+        rv.addWidget(self._build_trajectory(), 3)   
+        rv.addWidget(self._build_plots(), 2)         
         splitter.addWidget(right)
 
         splitter.setStretchFactor(0, 2)
@@ -264,7 +256,7 @@ class Dashboard(QMainWindow):
 
         self._timer = QTimer()
         self._timer.timeout.connect(self._refresh)
-        self._timer.start(50)   # 20 FPS
+        self._timer.start(50)  
 
     def _apply_style(self):
         self.setStyleSheet(f"""
@@ -292,7 +284,6 @@ class Dashboard(QMainWindow):
             f'font-weight:{"bold" if bold else "normal"};')
         return l
 
-    # ── Panel: Pose / Odometría ───────────────────────────────────────
     def _build_pose(self):
         grp = QGroupBox('Odometría — pose actual')
         g   = QGridLayout(grp); g.setSpacing(4)
@@ -306,7 +297,6 @@ class Dashboard(QMainWindow):
         self.l_vel = self._lbl('—', BLUE, 12, True); g.addWidget(self.l_vel, 3, 1)
         return grp
 
-    # ── Panel: PID Velocidad ──────────────────────────────────────────
     def _build_pid(self):
         grp = QGroupBox('PID Velocidad')
         g   = QGridLayout(grp); g.setSpacing(6)
@@ -318,7 +308,6 @@ class Dashboard(QMainWindow):
         self.l_err  = self._lbl('— m/s', WHITE, 12, True); g.addWidget(self.l_err, 2, 1)
         g.addWidget(self._lbl('Estado:', DIM), 3, 0)
         self.l_pid_st = self._lbl('—', DIM, 12, True); g.addWidget(self.l_pid_st, 3, 1)
-        # Barra seguimiento
         g.addWidget(self._lbl('Seguimiento:', DIM, 10), 4, 0, 1, 2)
         self.bar_follow = QProgressBar()
         self.bar_follow.setRange(0, 100); self.bar_follow.setValue(0)
@@ -326,7 +315,6 @@ class Dashboard(QMainWindow):
         g.addWidget(self.bar_follow, 5, 0, 1, 2)
         return grp
 
-    # ── Panel: Actuadores ─────────────────────────────────────────────
     def _build_actuators(self):
         grp = QGroupBox('Actuadores → ESP32-A')
         g   = QGridLayout(grp); g.setSpacing(4)
@@ -338,7 +326,6 @@ class Dashboard(QMainWindow):
         self.l_ssp  = self._lbl('—', DIM, 11, True); g.addWidget(self.l_ssp, 2, 1)
         return grp
 
-    # ── Panel: LiDAR ─────────────────────────────────────────────────
     def _build_lidar(self):
         grp = QGroupBox('LiDAR — obstacle_detector')
         g   = QGridLayout(grp); g.setSpacing(4)
@@ -348,7 +335,6 @@ class Dashboard(QMainWindow):
         self.l_stops = self._lbl('0', DIM, 11, True); g.addWidget(self.l_stops, 1, 1)
         return grp
 
-    # ── Panel: Status ─────────────────────────────────────────────────
     def _build_status(self):
         grp = QGroupBox('Firmware — últimos eventos')
         v   = QVBoxLayout(grp); v.setSpacing(2)
@@ -360,7 +346,6 @@ class Dashboard(QMainWindow):
             self.status_labels.append(l)
         return grp
 
-    # ── Panel: Trayectoria (referencia vs real) ───────────────────────
     def _build_trajectory(self):
         grp = QGroupBox(
             'Trayectoria — verde: referencia  |  azul: real  |  ● posición actual')
@@ -378,17 +363,14 @@ class Dashboard(QMainWindow):
         self.p_traj.getAxis('bottom').setPen(BORDER)
         self.p_traj.getAxis('left').setPen(BORDER)
 
-        # Trayectoria referencia — línea verde discontinua
         self.c_ref  = self.p_traj.plot(
             pen=pg.mkPen(GREEN, width=2, style=Qt.DashLine),
             name='Referencia')
 
-        # Trayectoria real — línea azul sólida
         self.c_real_path = self.p_traj.plot(
             pen=pg.mkPen(BLUE, width=2),
             name='Real')
 
-        # Posición actual — punto amarillo grande
         self.c_pos = self.p_traj.plot(
             pen=None,
             symbol='o',
@@ -398,7 +380,6 @@ class Dashboard(QMainWindow):
 
         return grp
 
-    # ── Panel: Gráficas velocidad ─────────────────────────────────────
     def _build_plots(self):
         grp = QGroupBox('Velocidad en tiempo real')
         v   = QVBoxLayout(grp); v.setContentsMargins(4, 16, 4, 4)
@@ -407,7 +388,6 @@ class Dashboard(QMainWindow):
         pw.setBackground(CARD)
         v.addWidget(pw)
 
-        # Gráfica velocidad: setpoint vs real
         self.p_vel = pw.addPlot(row=0, col=0)
         self.p_vel.setTitle(
             '<span style="color:#8B949E;font-size:9pt">'
@@ -420,7 +400,6 @@ class Dashboard(QMainWindow):
         self.c_vel_sp   = self.p_vel.plot(pen=pg.mkPen(GREEN, width=2))
         self.c_vel_real = self.p_vel.plot(pen=pg.mkPen(BLUE,  width=2))
 
-        # Gráfica throttle
         self.p_thr = pw.addPlot(row=0, col=1)
         self.p_thr.setTitle(
             '<span style="color:#FF8C00;font-size:9pt">■ Throttle → ESP32</span>')
@@ -432,12 +411,10 @@ class Dashboard(QMainWindow):
 
         return grp
 
-    # ── Refresh 20 FPS ────────────────────────────────────────────────
     def _refresh(self):
         n = self.node
 
         with n.lock:
-            # Trayectorias
             ref_xs   = list(n.ref_xs)
             ref_ys   = list(n.ref_ys)
             real_xs  = list(n.real_xs)
@@ -445,7 +422,6 @@ class Dashboard(QMainWindow):
             pos_x    = n.pos_x
             pos_y    = n.pos_y
             hdg      = n.heading_deg
-            # PID
             sp       = n.pid_sp
             real     = n.pid_real
             err      = n.pid_error
@@ -453,25 +429,20 @@ class Dashboard(QMainWindow):
             steer    = n.steering
             ssp      = n.steer_sp
             vel_lin  = n.vel_linear
-            # Historial
             ht       = list(n.h_t)
             hsp      = list(n.h_sp)
             hreal    = list(n.h_real)
             hthr     = list(n.h_thr)
-            # LiDAR
             obs      = n.obstacle
             stops    = n.obs_stops
-            # Status
             statuses = list(n.status_buf)
 
-        # ── Trayectoria ──────────────────────────────────────────────
         if ref_xs:
             self.c_ref.setData(ref_xs, ref_ys)
         if real_xs:
             self.c_real_path.setData(real_xs, real_ys)
         self.c_pos.setData([pos_x], [pos_y])
 
-        # ── Gráficas velocidad ────────────────────────────────────────
         if len(ht) >= 2:
             self.c_vel_sp.setData(ht,  hsp)
             self.c_vel_real.setData(ht, hreal)
@@ -480,7 +451,6 @@ class Dashboard(QMainWindow):
             x0 = max(0.0, te - HISTORY_S)
             self.p_vel.setXRange(x0, te + 0.5, padding=0)
 
-        # ── Pose ──────────────────────────────────────────────────────
         self.l_x.setText(f'{pos_x:.3f} m')
         self.l_y.setText(f'{pos_y:.3f} m')
         self.l_hdg.setText(f'{hdg:.1f}°')
@@ -489,7 +459,6 @@ class Dashboard(QMainWindow):
         self.l_vel.setStyleSheet(
             f'color:{vc};font-size:12px;font-weight:bold;')
 
-        # ── PID ───────────────────────────────────────────────────────
         self.l_sp.setText(f'{sp:+.3f} m/s')
         rc = (GREEN if abs(err) < 0.03
               else YELLOW if abs(err) < 0.08 else RED)
@@ -504,11 +473,11 @@ class Dashboard(QMainWindow):
         if abs(sp) < 0.02:
             pid_st, pid_sc = 'INACTIVO', DIM
         elif abs(err) < 0.03:
-            pid_st, pid_sc = '✓ CONVERGIDO', GREEN
+            pid_st, pid_sc = ' CONVERGIDO', GREEN
         elif abs(err) < 0.08:
-            pid_st, pid_sc = '~ AJUSTANDO', YELLOW
+            pid_st, pid_sc = ' AJUSTANDO', YELLOW
         else:
-            pid_st, pid_sc = '✗ ERROR ALTO', RED
+            pid_st, pid_sc = ' ERROR ALTO', RED
         self.l_pid_st.setText(pid_st)
         self.l_pid_st.setStyleSheet(
             f'color:{pid_sc};font-size:12px;font-weight:bold;')
@@ -520,7 +489,6 @@ class Dashboard(QMainWindow):
         self.bar_follow.setStyleSheet(
             f'QProgressBar::chunk{{background:{fc};border-radius:3px;}}')
 
-        # ── Actuadores ────────────────────────────────────────────────
         tc = GREEN if thr == 0 else ORANGE
         self.l_thr.setText(f'{thr:+.3f}')
         self.l_thr.setStyleSheet(
@@ -531,7 +499,6 @@ class Dashboard(QMainWindow):
             f'color:{sc};font-size:12px;font-weight:bold;')
         self.l_ssp.setText(f'{ssp:+.3f}')
 
-        # ── LiDAR ────────────────────────────────────────────────────
         if obs:
             self.l_obs.setText('¡OBSTÁCULO!')
             self.l_obs.setStyleSheet(
@@ -542,7 +509,6 @@ class Dashboard(QMainWindow):
                 f'color:{GREEN};font-size:12px;font-weight:bold;')
         self.l_stops.setText(str(stops))
 
-        # ── Status ───────────────────────────────────────────────────
         for i, lbl in enumerate(self.status_labels):
             if i < len(statuses):
                 s = statuses[-(i+1)]
@@ -554,7 +520,6 @@ class Dashboard(QMainWindow):
                 lbl.setText('')
 
 
-# ── main ──────────────────────────────────────────────────────────────
 def main():
     rclpy.init()
     node = DashboardBackend()

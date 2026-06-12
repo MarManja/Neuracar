@@ -1,30 +1,45 @@
-#!/usr/bin/env python3
 """
-stanley_controller_node.py — Neuracar v2.7
-==========================================
-Stanley baseline configurado con los mismos defaults que funcionaron en
-Pure Pursuit v2.5, pero usando lógica Stanley:
+stanley_controller_node.py — NeuraCar
+══════════════════════════════════════════════════════════════════
+Tecnológico de Monterrey, Campus Puebla — MR3002B, 2026
 
-  delta = heading_error - atan2(k * cte, |v| + k_soft)
+Stanley path-tracking controller. Minimizes combined heading error
+and cross-track error from the front axle center. Saves post-run
+analysis (CSV, TXT, PNG) automatically on Ctrl+C.
 
-Publica:
-  /neuracar/cmd_velocity  (std_msgs/Float32)  [m/s]
-  /neuracar/cmd_steering  (std_msgs/Float32)  [-1, 1]
+  delta = heading_error + atan2(k * cte, |v| + k_soft)
 
-El velocity_pid_node convierte cmd_velocity + cmd_steering a throttle real.
+Subscriptions:
+  /neuracar/odometry              nav_msgs/Odometry
+  /neuracar/velocity              geometry_msgs/TwistStamped
+  /neuracar/lidar/obstacle_alert  std_msgs/Bool
 
-Incluye:
-  - run_name default: vuelta_05_5cm
-  - steering_sign default: -1.0, igual que el Pure Pursuit corregido
-  - búsqueda local de waypoints
-  - índice monótono para evitar retrocesos
-  - velocidad recta/curva con mínimos físicos
-  - modo LiDAR configurable: cortar prueba o pausar/reanudar
-  - publicación de path_reference y path_real para dashboard
-  - análisis CSV/TXT/PNG al cerrar con Ctrl+C
-  - hard_stop al cerrar: publica ceros repetidos para asegurar que el PID reciba stop
+Publications:
+  /neuracar/cmd_velocity   std_msgs/Float32   [m/s]
+  /neuracar/cmd_steering   std_msgs/Float32   [-1, 1]
+  /neuracar/path_reference nav_msgs/Path      reference waypoints
+  /neuracar/path_real      nav_msgs/Path      measured trajectory
+
+Parameters:
+  run_name             (str,   vuelta_05_5cm): CSV trajectory (no extension)
+  k                    (float, 0.80):  Cross-track error gain
+  k_soft               (float, 0.50):  Low-speed softening factor
+  heading_lookahead    (float, 0.30):  Path heading preview distance [m]
+  wheelbase            (float, 0.256): Vehicle wheelbase L [m]
+  speed                (float, 0.50):  Straight speed [m/s]
+  speed_curve          (float, 0.55):  Curve speed [m/s]
+  curve_steer_threshold(float, 0.35):  |steering| threshold for curve mode
+  max_steer            (float, 0.50):  Max steering angle [rad]
+  steering_sign        (float, -1.0):  Servo inversion correction
+  nearest_back_steps   (int,   0):     Local search backward window
+  nearest_fwd_steps    (int,   35):    Local search forward window
+  monotonic_index      (bool,  true):  Prevent backward trajectory jumps
+  loop                 (bool,  false): Repeat trajectory at goal
+  max_loops            (int,   1):     Max laps (0 = infinite)
+  goal_radius          (float, 0.25):  Goal detection radius [m]
+  stop_on_obstacle     (bool,  false): true=end run, false=pause/resume
+══════════════════════════════════════════════════════════════════
 """
-
 import csv
 import math
 import os
@@ -46,11 +61,6 @@ from std_msgs.msg import Bool, Float32
 
 Waypoint = Tuple[float, float, float]
 
-
-# ─────────────────────────────────────────────────────────────────────
-# Utilidades de archivos
-# ─────────────────────────────────────────────────────────────────────
-
 def _base_data_dir() -> str:
     pkg_src = os.path.expanduser('~/Workspaces/Neuracar/src/neuracar_control')
     if os.path.isdir(pkg_src):
@@ -68,19 +78,15 @@ def _base_data_dir() -> str:
 
     return os.path.expanduser('~/Workspaces/Neuracar/src/neuracar_control/data')
 
-
 def resolve_data_dir() -> str:
     d = os.path.join(_base_data_dir(), 'trajectories')
     os.makedirs(d, exist_ok=True)
     return d
 
-
 def resolve_runs_dir() -> str:
-    # Misma carpeta usada por Pure Pursuit v2.x para comparar resultados.
     d = os.path.join(_base_data_dir(), 'runs_stanley')
     os.makedirs(d, exist_ok=True)
     return d
-
 
 def load_csv(path: str) -> List[Waypoint]:
     pts: List[Waypoint] = []
@@ -89,11 +95,6 @@ def load_csv(path: str) -> List[Waypoint]:
             pts.append((float(row['x']), float(row['y']), float(row['theta'])))
     return pts
 
-
-# ─────────────────────────────────────────────────────────────────────
-# Utilidades matemáticas
-# ─────────────────────────────────────────────────────────────────────
-
 def normalize(a: float) -> float:
     while a > math.pi:
         a -= 2.0 * math.pi
@@ -101,10 +102,8 @@ def normalize(a: float) -> float:
         a += 2.0 * math.pi
     return a
 
-
 def dist2d(p, q) -> float:
     return math.hypot(p[0] - q[0], p[1] - q[1])
-
 
 def yaw_from_quat(qx, qy, qz, qw) -> float:
     return math.atan2(
@@ -112,14 +111,12 @@ def yaw_from_quat(qx, qy, qz, qw) -> float:
         1.0 - 2.0 * (qy ** 2 + qz ** 2)
     )
 
-
 def cumulative_lengths(wps: List[Waypoint]) -> List[float]:
     s = [0.0]
     for i in range(1, len(wps)):
         s.append(s[-1] + dist2d((wps[i-1][0], wps[i-1][1]),
                                 (wps[i][0], wps[i][1])))
     return s
-
 
 def path_heading(wps: List[Waypoint], idx: int, heading_idx: int) -> float:
     idx = max(0, min(idx, len(wps) - 1))
@@ -131,13 +128,11 @@ def path_heading(wps: List[Waypoint], idx: int, heading_idx: int) -> float:
         if dist2d((x0, y0), (x1, y1)) > 1e-6:
             return math.atan2(y1 - y0, x1 - x0)
 
-    # Fallback si los puntos están repetidos o estamos al final.
     if idx < len(wps) - 1:
         x0, y0, _ = wps[idx]
         x1, y1, _ = wps[idx + 1]
         return math.atan2(y1 - y0, x1 - x0)
     return wps[idx][2]
-
 
 def advance_by_distance(s_map: List[float], start_idx: int, ds: float) -> int:
     target_s = s_map[start_idx] + max(0.0, ds)
@@ -145,11 +140,6 @@ def advance_by_distance(s_map: List[float], start_idx: int, ds: float) -> int:
     while i < len(s_map) - 1 and s_map[i] < target_s:
         i += 1
     return i
-
-
-# ─────────────────────────────────────────────────────────────────────
-# Análisis final
-# ─────────────────────────────────────────────────────────────────────
 
 def compute_analysis(ref: List[Waypoint], real, run_name: str, runs_dir: str,
                      elapsed: float, obstacle_stops: int, loops_done: int,
@@ -205,7 +195,6 @@ def compute_analysis(ref: List[Waypoint], real, run_name: str, runs_dir: str,
         w.writeheader()
         w.writerows(rows)
 
-    # Reporte
     rpt = os.path.join(runs_dir, f'{stem}_report.txt')
     with open(rpt, 'w') as f:
         f.write(f'Stanley Controller — Reporte\n{"="*40}\n')
@@ -219,7 +208,6 @@ def compute_analysis(ref: List[Waypoint], real, run_name: str, runs_dir: str,
         f.write(f'% < 5 cm    : {pct5:.1f}%\n')
         f.write(f'% < 10 cm   : {pct10:.1f}%\n')
 
-    # PNG
     png_out = os.path.join(runs_dir, f'{stem}_trayectoria.png')
     try:
         fig, axes = plt.subplots(1, 2, figsize=(14, 6))
@@ -283,17 +271,11 @@ def compute_analysis(ref: List[Waypoint], real, run_name: str, runs_dir: str,
 
     print(f'Análisis guardado: {runs_dir}/{stem}')
 
-
-# ─────────────────────────────────────────────────────────────────────
-# Nodo Stanley
-# ─────────────────────────────────────────────────────────────────────
-
 class StanleyControllerNode(Node):
 
     def __init__(self):
         super().__init__('stanley_controller')
 
-        # ── Parámetros con defaults baseline ─────────────────────────
         self.declare_parameter('run_name', 'vuelta_05_5cm')
 
         # Geometría / Stanley
@@ -302,31 +284,26 @@ class StanleyControllerNode(Node):
         self.declare_parameter('k', 0.80)
         self.declare_parameter('k_soft', 0.50)
         self.declare_parameter('cte_sign', 1.0)
-        self.declare_parameter('heading_lookahead', 0.30)  # m para suavizar heading
-        self.declare_parameter('max_steer', 0.50)          # rad aprox. que equivale a norm=1
+        self.declare_parameter('heading_lookahead', 0.30)  
+        self.declare_parameter('max_steer', 0.50)         
 
-        # Velocidad igual que baseline Pure Pursuit
         self.declare_parameter('speed', 0.50)
         self.declare_parameter('speed_curve', 0.55)
         self.declare_parameter('min_straight_speed', 0.45)
         self.declare_parameter('min_curve_speed', 0.55)
         self.declare_parameter('curve_steer_threshold', 0.35)
 
-        # Índice / búsqueda local
         self.declare_parameter('nearest_back_steps', 0)
         self.declare_parameter('nearest_fwd_steps', 35)
         self.declare_parameter('monotonic_index', True)
 
-        # Actuador steering: default corregido por pruebas físicas
         self.declare_parameter('steering_sign', -1.0)
         self.declare_parameter('steering_cmd_gain', 1.0)
 
-        # Meta / vueltas
         self.declare_parameter('goal_radius', 0.25)
         self.declare_parameter('loop', False)
         self.declare_parameter('max_loops', 1)
 
-        # LiDAR
         self.declare_parameter('stop_on_obstacle', False)
 
         self._run_name = str(self.get_parameter('run_name').value)
@@ -398,8 +375,7 @@ class StanleyControllerNode(Node):
             durability=QoSDurabilityPolicy.TRANSIENT_LOCAL)
         self._pub_ref = self.create_publisher(Path, '/neuracar/path_reference', qos_path_ref)
         self._pub_real = self.create_publisher(Path, '/neuracar/path_real', 10)
-        # Backup de seguridad: si el PID tarda en recibir cero, también se publica
-        # un user_command directo en cero al cerrar.
+
         self._pub_user = self.create_publisher(Vector3Stamped, '/neuracar/user_command', 10)
 
         # Subscribers
@@ -407,14 +383,13 @@ class StanleyControllerNode(Node):
         self.create_subscription(TwistStamped, '/neuracar/velocity', self._vel_cb, 10)
         self.create_subscription(Bool, '/neuracar/lidar/obstacle_alert', self._obs_cb, 10)
 
-        # Timers
         self.create_timer(0.10, self._record_pose)
         self.create_timer(0.05, self._control_loop)    # 20 Hz
         self.create_timer(0.50, self._publish_real_path)
         self.create_timer(1.00, self._publish_ref_once)
 
         self.get_logger().info('=' * 60)
-        self.get_logger().info(' STANLEY CONTROLLER v2.7 — baseline + hard stop + ref periódica')
+        self.get_logger().info(' STANLEY CONTROLLER ')
         self.get_logger().info('=' * 60)
         self.get_logger().info(
             f'  run={self._run_name} | {self._n} wp | longitud={self._path_len:.2f} m')
@@ -432,8 +407,6 @@ class StanleyControllerNode(Node):
             f'cte_sign={self._cte_sign:+.1f}')
         self.get_logger().info(
             f'  LiDAR: {"termina prueba" if self._stop_on_obstacle else "pausa y reanuda"}')
-
-    # ── Callbacks ───────────────────────────────────────────────────
 
     def _odom_cb(self, msg: Odometry):
         self._x = msg.pose.pose.position.x
@@ -465,8 +438,6 @@ class StanleyControllerNode(Node):
             else:
                 self.get_logger().info('Obstáculo despejado — reanudando')
 
-    # ── Registro / publicación paths ────────────────────────────────
-
     def _record_pose(self):
         if not self._done:
             self._real_track.append((
@@ -475,8 +446,7 @@ class StanleyControllerNode(Node):
             ))
 
     def _publish_ref_once(self):
-        # Se publica periódicamente para que el dashboard pueda abrirse antes o después
-        # del controlador y aun así recibir la referencia.
+
         path = Path()
         path.header.stamp = self.get_clock().now().to_msg()
         path.header.frame_id = 'odom'
@@ -512,12 +482,8 @@ class StanleyControllerNode(Node):
 
         self._pub_real.publish(path)
 
-    # ── Stanley ─────────────────────────────────────────────────────
-
     def _control_point(self):
-        """Punto usado para control. Default: centro de odometría.
-        Si front_axle_offset > 0, usa un punto adelantado sobre el eje del carro.
-        """
+
         fx = self._x + self._front_offset * math.cos(self._yaw)
         fy = self._y + self._front_offset * math.sin(self._yaw)
         return fx, fy
@@ -570,17 +536,12 @@ class StanleyControllerNode(Node):
         wx, wy, _ = self._waypoints[nearest]
         path_hdg = path_heading(self._waypoints, nearest, heading_idx)
 
-        # Error de orientación: positivo = girar a la izquierda en convención matemática.
         psi_e = normalize(path_hdg - self._yaw)
 
-        # CTE firmado con respecto a la tangente de la trayectoria.
-        # cte positivo = carro a la izquierda de la trayectoria.
         dx = px - wx
         dy = py - wy
         cte = (-math.sin(path_hdg) * dx + math.cos(path_hdg) * dy) * self._cte_sign
 
-        # Stanley: si el carro está a la izquierda de la línea, necesita corregir a la derecha,
-        # por eso se resta el término transversal.
         v_eff = abs(self._v) + self._k_soft
         cte_term = math.atan2(self._k * cte, max(v_eff, 1e-3))
         steer_rad = normalize(psi_e - cte_term)
@@ -618,12 +579,7 @@ class StanleyControllerNode(Node):
             pass
 
     def _publish_user_zero(self):
-        """Backup directo al tópico final del firmware.
 
-        Normalmente manda el velocity_pid_node, pero al cerrar el controlador
-        conviene publicar cero también aquí para que el ESP32 no conserve el
-        último comando si /cmd_velocity no alcanzó a llegar.
-        """
         try:
             msg = Vector3Stamped()
             msg.header.stamp = self.get_clock().now().to_msg()
@@ -636,13 +592,7 @@ class StanleyControllerNode(Node):
             pass
 
     def hard_stop(self, duration_s: float = 0.8, rate_hz: float = 25.0):
-        """Publica stop varias veces antes de destruir el nodo.
 
-        Con un solo publish(0,0), a veces el mensaje no alcanza a salir antes
-        de destruir el nodo o el velocity_pid_node se queda con el último
-        setpoint. Esta rutina manda ceros repetidos a cmd_velocity/cmd_steering
-        y también un cero directo a /neuracar/user_command como respaldo.
-        """
         period = 1.0 / max(rate_hz, 1.0)
         end_t = time.time() + max(duration_s, 0.1)
         while time.time() < end_t:
